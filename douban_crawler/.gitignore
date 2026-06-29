@@ -1,0 +1,22 @@
+# CSV数据文件（大文件，不入仓库）
+data/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# 虚拟环境
+venv/
+.env/

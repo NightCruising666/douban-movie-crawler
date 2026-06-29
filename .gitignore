@@ -1,0 +1,12 @@
+# 项目根目录 gitignore
+
+# macOS
+.DS_Store
+
+# Claude配置（个人使用）
+.claude/
+
+# 大文件/参考资料
+*.pdf
+*.docx
+*.csv

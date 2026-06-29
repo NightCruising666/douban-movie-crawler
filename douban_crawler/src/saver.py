@@ -1,0 +1,101 @@
+"""
+CSV保存模块
+==========
+负责将爬取的数据写入CSV文件。
+
+为什么用csv模块而不是直接写文件？
+- 自动处理字段内的逗号、引号、换行符
+- 支持中文编码（utf-8-sig）
+- DictWriter让代码和字段名绑定，不易出错
+"""
+
+import csv
+import os
+from . import config
+
+
+def ensure_data_dir():
+    """确保 data/ 目录存在。"""
+    # 项目根目录是 douban_crawler/
+    data_dir = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "data"
+    )
+    os.makedirs(data_dir, exist_ok=True)
+    return data_dir
+
+
+def save_to_csv(records, filename, fieldnames):
+    """
+    将字典列表保存为CSV文件。
+
+    参数:
+        records:    list[dict]，每条记录是一个字典
+        filename:   保存的文件名（如 "movies.csv"）
+        fieldnames: list[str]，CSV列名（决定列顺序）
+
+    返回:
+        保存的文件完整路径
+    """
+    data_dir = ensure_data_dir()
+    filepath = os.path.join(data_dir, filename)
+
+    with open(filepath, "w", newline="", encoding=config.CSV_ENCODING) as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()   # 写入表头
+        writer.writerows(records)  # 批量写入数据
+
+    print(f"已保存: {filepath}  ({len(records)} 条记录)")
+    return filepath
+
+
+def append_to_csv(records, filename, fieldnames):
+    """
+    追加写入CSV（首次写入时写入表头，后续追加数据）。
+
+    用于分批采集时，边爬边存，防止中途崩溃丢失数据。
+    """
+    data_dir = ensure_data_dir()
+    filepath = os.path.join(data_dir, filename)
+
+    # 判断是否需要写表头
+    file_exists = os.path.exists(filepath) and os.path.getsize(filepath) > 0
+
+    with open(filepath, "a", newline="", encoding=config.CSV_ENCODING) as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerows(records)
+
+    return filepath
+
+
+def deduplicate_movies(input_csv, output_csv, key_field="电影名称"):
+    """
+    按指定字段去重，保留每组中的第一条。
+
+    豆瓣多个标签会包含同一部电影（如《肖申克的救赎》
+    同时出现在"经典"和"豆瓣高分"中），这个函数解决重复问题。
+    """
+    data_dir = ensure_data_dir()
+    input_path = os.path.join(data_dir, input_csv)
+    output_path = os.path.join(data_dir, output_csv)
+
+    seen = set()
+    unique = []
+
+    with open(input_path, "r", encoding=config.CSV_ENCODING) as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames
+        for row in reader:
+            key = row.get(key_field, "")
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(row)
+
+    with open(output_path, "w", newline="", encoding=config.CSV_ENCODING) as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(unique)
+
+    print(f"去重完成: {input_path} ({len(seen) + len(unique)}条→{len(unique)}条) → {output_path}")
+    return output_path

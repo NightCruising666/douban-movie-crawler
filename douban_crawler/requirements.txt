@@ -1,0 +1,11 @@
+# 豆瓣电影爬虫项目依赖
+requests>=2.31.0          # HTTP请求
+beautifulsoup4>=4.12.0    # HTML解析
+lxml>=4.9.0               # 解析引擎(比内置parser快10倍)
+pandas>=2.0.0             # 数据处理
+matplotlib>=3.7.0         # 可视化
+seaborn>=0.12.0           # 高级可视化(热力图、箱线图等)
+jupyterlab>=4.0.0         # Jupyter环境
+jieba>=0.42.1             # 中文分词(文本分析用)
+wordcloud>=1.9.0          # 词云(文本分析用)
+openpyxl>=3.1.0           # Excel读写(可选)
