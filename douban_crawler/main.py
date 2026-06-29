@@ -121,14 +121,15 @@ def load_existing_raw_movies():
 # ==================== 自适应延迟 ====================
 
 def adaptive_delay(fail_count):
+    """失败越多等越久。使用 config 中的可配参数。"""
     if fail_count <= 2:
-        return config.DELAY_SECONDS
+        return config.DETAIL_DELAY_SECONDS
     elif fail_count <= 5:
-        return 5.0
+        return config.FAIL_COOLDOWN_SHORT
     elif fail_count <= 10:
-        return 15.0
+        return config.FAIL_COOLDOWN_LONG
     else:
-        return 60.0
+        return config.FAIL_COOLDOWN_HARD
 
 
 # ==================== 阶段一：电影列表采集 ====================
@@ -282,6 +283,7 @@ def stage2_details(all_movies):
     print("=" * 60)
 
     fail_count = 0
+    success_streak = 0  # 成功计数，用于主动冷却
     new_count = 0
 
     for i, movie in enumerate(all_movies, 1):
@@ -295,10 +297,17 @@ def stage2_details(all_movies):
         if movie_title in collected:
             continue
 
-        delay = adaptive_delay(fail_count) if fail_count > 0 else config.DELAY_SECONDS
+        # ---- 速率控制 ----
+        # 策略1: 失败后的自适应冷却
+        delay = adaptive_delay(fail_count) if fail_count > 0 else config.DETAIL_DELAY_SECONDS
         if fail_count > 2:
             print(f"  [冷却] 连续失败{fail_count}次，等待{delay:.0f}秒...")
             time.sleep(delay)
+
+        # 策略2: 主动冷却 — 每N部电影休息一下，防止触发硬限
+        if success_streak > 0 and success_streak % config.COOLDOWN_EVERY_N == 0:
+            print(f"  [主动冷却] 已采集{success_streak}部，休息{config.COOLDOWN_SECONDS}秒...")
+            time.sleep(config.COOLDOWN_SECONDS)
 
         print(f"[{i}/{target}]", end=" ")
         detail = parse_movie_detail(movie_id)
@@ -307,17 +316,22 @@ def stage2_details(all_movies):
             append_to_csv([detail], config.MOVIES_CSV, MOVIE_FIELDS)
             collected.add(movie_title)
             new_count += 1
+            success_streak += 1
             fail_count = 0
         else:
             fail_count += 1
+            success_streak = 0  # 失败打断成功连续计数
             print(f"  ⚠ 连续失败 {fail_count} 次")
 
+            # 策略3: 硬冷却 — 超过10次连续失败，触发长暂停
             if fail_count >= 10:
-                print(f"  🛑 暂停 60 秒...")
-                time.sleep(60)
+                print(f"  🛑 触发硬冷却，暂停 {config.FAIL_COOLDOWN_HARD} 秒（5分钟）...")
+                time.sleep(config.FAIL_COOLDOWN_HARD)
                 fail_count = 0
+                success_streak = 0
 
-        time.sleep(config.DELAY_SECONDS)
+        # 基础延迟（比搜索API更长）
+        time.sleep(config.DETAIL_DELAY_SECONDS)
 
     total = len(load_existing_ids(config.MOVIES_CSV))
     print(f"\n  阶段二完成!")

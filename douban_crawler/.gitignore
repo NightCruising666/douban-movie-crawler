@@ -1,5 +1,5 @@
-# CSV数据文件（大文件，不入仓库）
-data/*.csv
+# 断点文件（运行时生成，不入仓库）
+data/.checkpoint_*
 
 # Python
 __pycache__/

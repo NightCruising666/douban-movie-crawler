@@ -22,9 +22,21 @@ HEADERS = {
 REQUEST_TIMEOUT = 10
 
 # 请求间隔（秒）——反爬的关键参数！
-# 豆瓣对频率敏感，每次请求后至少等2秒。
-# 如果被封，调大到3-5秒。
-DELAY_SECONDS = 2.0
+# 搜索API（阶段一）：2秒够用，约380次请求无问题
+# Rexxar API（阶段二）：豆瓣对详情API更敏感，需更大间隔
+DELAY_SECONDS = 2.0         # 搜索API用
+DETAIL_DELAY_SECONDS = 3.0  # Rexxar API用（阶段二/三）
+
+# Rexxar API 速率限制策略
+# 每采集 N 部电影后主动休息，防止触发豆瓣硬限
+COOLDOWN_EVERY_N = 30       # 每 N 部电影
+COOLDOWN_SECONDS = 30       # 休息秒数
+
+# 连续失败处理
+# 触发硬限后需要更长的冷却时间（豆瓣IP限制通常在5-10分钟恢复）
+FAIL_COOLDOWN_SHORT = 5     # 短冷却（连续失败 ≤5次）
+FAIL_COOLDOWN_LONG = 30     # 长冷却（连续失败 6-10次）
+FAIL_COOLDOWN_HARD = 300    # 硬冷却（连续失败 >10次，IP级别限制）
 
 # 请求失败后最大重试次数
 MAX_RETRIES = 3
