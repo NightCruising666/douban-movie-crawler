@@ -70,8 +70,9 @@ MOVIE_TAGS = [
 # ========== 输出配置 ==========
 
 # CSV保存路径（相对于项目根目录）
-MOVIES_CSV = "data/movies.csv"
-REVIEWS_CSV = "data/reviews.csv"
+MOVIES_RAW_CSV = "data/movies_raw.csv"   # 阶段一原始列表（全部去重电影）
+MOVIES_CSV = "data/movies.csv"           # 阶段二电影详情
+REVIEWS_CSV = "data/reviews.csv"         # 阶段三短评
 
 # CSV编码
 CSV_ENCODING = "utf-8-sig"  # utf-8-sig → Excel能正确打开中文

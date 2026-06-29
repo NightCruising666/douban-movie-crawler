@@ -111,6 +111,18 @@ def main():
         print("未获取到任何电影，请检查网络。")
         return
 
+    # ---- 保存原始电影列表（全部2478部，不删） ----
+    raw_data = []
+    for m in all_movies:
+        raw_data.append({
+            "豆瓣ID": extract_movie_id(m.get("url", "")),
+            "电影名称": m.get("title", ""),
+            "评分": m.get("rate", ""),
+            "URL": m.get("url", ""),
+        })
+    save_to_csv(raw_data, config.MOVIES_RAW_CSV, ["豆瓣ID", "电影名称", "评分", "URL"])
+    print(f"  原始列表已保存 ({len(raw_data)} 部) → {config.MOVIES_RAW_CSV}\n")
+
     target = min(config.TARGET_MOVIES, len(all_movies))
     all_movies = all_movies[:target]
     print(f"选取前 {target} 部进行详细采集\n")
@@ -170,64 +182,16 @@ def main():
 
         time.sleep(config.DELAY_SECONDS)
 
-    print(f"\n电影详情采集完成: 本次新增 {saved_count - len(collected_movies) + len(collected_movies)} 部 → {config.MOVIES_CSV}\n")
+    print(f"\n电影详情采集完成: {len(load_existing_ids(movies_csv_path))} 部 → {config.MOVIES_CSV}\n")
 
-    # ========== 阶段三：采集短评（边爬边存） ==========
-    print("\n[阶段三] 采集短评（6字段）—— 边爬边存\n")
-
-    reviews_csv_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        config.REVIEWS_CSV
-    )
-    collected_review_movies = load_existing_ids(reviews_csv_path)
-
-    # 只对已成功采集详情的电影拉短评
-    fail_count = 0
-    total_reviews = 0
-
-    for i, movie in enumerate(all_movies, 1):
-        movie_id = extract_movie_id(movie.get("url", ""))
-        movie_title = movie.get("title", "")
-
-        if not movie_id or not movie_title:
-            continue
-
-        # 跳过已有短评的电影
-        if movie_title in collected_review_movies:
-            print(f"[{i}/{target}] 跳过短评（已有）: 《{movie_title}》")
-            continue
-
-        delay = adaptive_delay(fail_count) if fail_count > 0 else config.DELAY_SECONDS
-        if delay != config.DELAY_SECONDS:
-            print(f"  [冷却] 连续失败{fail_count}次，等待{delay:.0f}秒...")
-            time.sleep(delay)
-
-        print(f"[{i}/{target}]", end=" ")
-        reviews = parse_movie_reviews(movie_id, movie_title)
-
-        if reviews:
-            append_to_csv(reviews, config.REVIEWS_CSV, REVIEW_FIELDS)
-            total_reviews += len(reviews)
-            collected_review_movies.add(movie_title)
-            fail_count = 0
-        else:
-            fail_count += 1
-            print(f"  ⚠ 连续失败 {fail_count} 次")
-
-            if fail_count >= 10:
-                print(f"  🛑 连续失败 {fail_count} 次，暂停 60 秒...")
-                time.sleep(60)
-                fail_count = 0
-
-        time.sleep(config.DELAY_SECONDS)
-
-    print(f"\n短评采集完成: 本次新增 {total_reviews} 条 → {config.REVIEWS_CSV}")
-
-    # ========== 完成 ==========
-    print("\n" + "=" * 60)
-    print("  采集完成!")
+    # ========== 阶段二完成，暂停等待确认 ==========
+    print("=" * 60)
+    print("  阶段二完成！")
     print(f"  电影详情: {len(load_existing_ids(movies_csv_path))} 部 → {config.MOVIES_CSV}")
-    print(f"  短评数据: 写入 {config.REVIEWS_CSV}")
+    print(f"  原始列表: {len(raw_data)} 部 → {config.MOVIES_RAW_CSV}")
+    print()
+    print("  如需继续采集短评，请运行:")
+    print("    python main_stage3.py")
     print("=" * 60)
 
 
