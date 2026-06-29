@@ -24,6 +24,14 @@ def ensure_data_dir():
     return data_dir
 
 
+def _resolve_path(filename):
+    """处理文件名中的 data/ 前缀，避免 data/data/ 路径重复。"""
+    data_dir = ensure_data_dir()
+    # 如果 filename 已经包含 "data/" 前缀，去掉它
+    basename = filename.replace("data/", "").replace("data\\", "")
+    return os.path.join(data_dir, basename)
+
+
 def save_to_csv(records, filename, fieldnames):
     """
     将字典列表保存为CSV文件。
@@ -36,8 +44,7 @@ def save_to_csv(records, filename, fieldnames):
     返回:
         保存的文件完整路径
     """
-    data_dir = ensure_data_dir()
-    filepath = os.path.join(data_dir, filename)
+    filepath = _resolve_path(filename)
 
     with open(filepath, "w", newline="", encoding=config.CSV_ENCODING) as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -54,8 +61,7 @@ def append_to_csv(records, filename, fieldnames):
 
     用于分批采集时，边爬边存，防止中途崩溃丢失数据。
     """
-    data_dir = ensure_data_dir()
-    filepath = os.path.join(data_dir, filename)
+    filepath = _resolve_path(filename)
 
     # 判断是否需要写表头
     file_exists = os.path.exists(filepath) and os.path.getsize(filepath) > 0
@@ -76,9 +82,8 @@ def deduplicate_movies(input_csv, output_csv, key_field="电影名称"):
     豆瓣多个标签会包含同一部电影（如《肖申克的救赎》
     同时出现在"经典"和"豆瓣高分"中），这个函数解决重复问题。
     """
-    data_dir = ensure_data_dir()
-    input_path = os.path.join(data_dir, input_csv)
-    output_path = os.path.join(data_dir, output_csv)
+    input_path = _resolve_path(input_csv)
+    output_path = _resolve_path(output_csv)
 
     seen = set()
     unique = []
