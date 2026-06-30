@@ -21,22 +21,35 @@ HEADERS = {
 # 请求超时时间（秒）
 REQUEST_TIMEOUT = 10
 
-# 请求间隔（秒）——反爬的关键参数！
-# 搜索API（阶段一）：2秒够用，约380次请求无问题
-# Rexxar API（阶段二）：豆瓣对详情API更敏感，需更大间隔
-DELAY_SECONDS = 2.0         # 搜索API用
-DETAIL_DELAY_SECONDS = 3.0  # Rexxar API用（阶段二/三）
+# ========== 请求间隔 & 随机延迟 ==========
+# 为什么用随机延迟？
+#   固定间隔容易被反爬系统识别为机器行为（周期性规律）
+#   随机 ±30% 的抖动模拟人类阅读页面的自然节奏
+#   反爬系统的行为分析会降低对"有波动"请求的敏感度
 
-# Rexxar API 速率限制策略
-# 每采集 N 部电影后主动休息，防止触发豆瓣硬限
-COOLDOWN_EVERY_N = 30       # 每 N 部电影
-COOLDOWN_SECONDS = 30       # 休息秒数
+import random as _random
 
-# 连续失败处理
-# 触发硬限后需要更长的冷却时间（豆瓣IP限制通常在5-10分钟恢复）
-FAIL_COOLDOWN_SHORT = 5     # 短冷却（连续失败 ≤5次）
-FAIL_COOLDOWN_LONG = 30     # 长冷却（连续失败 6-10次）
-FAIL_COOLDOWN_HARD = 300    # 硬冷却（连续失败 >10次，IP级别限制）
+def random_delay(base):
+    """在基准延迟上添加 ±30% 随机抖动"""
+    jitter = base * 0.3
+    return base + _random.uniform(-jitter, jitter)
+
+# 搜索API（阶段一）：基础 2 秒 ± 30% → 1.4~2.6 秒
+SEARCH_DELAY_BASE = 2.0
+
+# Rexxar API（阶段二/三）：基础 5 秒 ± 30% → 3.5~6.5 秒
+#   从 3s 提升到 5s，降低单 IP 请求速率
+DETAIL_DELAY_BASE = 5.0
+
+# 主动冷却：每 N 部成功后强制休息（给 IP 缓冲时间）
+COOLDOWN_EVERY_N = 15       # 每 15 部
+COOLDOWN_SECONDS = 45       # 休息 45 秒
+
+# 连续失败后的冷却（豆瓣硬限后需要更长时间恢复）
+FAIL_PAUSE_SHORT = 10       # 1-3次失败：等 10 秒
+FAIL_PAUSE_MEDIUM = 45      # 4-6次失败：等 45 秒
+FAIL_PAUSE_LONG = 120       # 7-9次失败：等 2 分钟
+FAIL_PAUSE_HARD = 600       # ≥10次失败：等 10 分钟（IP级别限制）
 
 # 请求失败后最大重试次数
 MAX_RETRIES = 3
