@@ -20,7 +20,7 @@ from src.saver import append_to_csv
 REVIEWS_PER_MOVIE = 20      # 每部电影拉多少条短评
 COOLDOWN_EVERY_MOVIES = 3   # 每 N 部电影后主动冷却
 COOLDOWN_SECONDS = 45       # 冷却秒数
-PAUSE_AT_TOTAL = 300        # 达到此总数时暂停（0=不暂停）
+PAUSE_AT_TOTAL = 499        # 达到此总数时暂停（0=不暂停）
 
 REVIEW_FIELDS = [
     "电影名称", "用户名称", "评分", "短评正文", "有用数", "评论时间"
