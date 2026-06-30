@@ -20,6 +20,7 @@ from src.saver import append_to_csv
 REVIEWS_PER_MOVIE = 20      # 每部电影拉多少条短评
 COOLDOWN_EVERY_MOVIES = 3   # 每 N 部电影后主动冷却
 COOLDOWN_SECONDS = 45       # 冷却秒数
+BATCH_PAUSE_EVERY = 100     # 每 N 部暂停汇报（0=不暂停）
 
 REVIEW_FIELDS = [
     "电影名称", "用户名称", "评分", "短评正文", "有用数", "评论时间"
@@ -98,6 +99,17 @@ for i, title in enumerate(pending, 1):
         total_reviews += len(reviews)
         fail_count = 0
         time.sleep(delay)
+
+        # 每 N 部自动暂停，等你手动续跑
+        if BATCH_PAUSE_EVERY > 0 and new_movies % BATCH_PAUSE_EVERY == 0:
+            done = len(done_movies) + new_movies
+            rc = sum(1 for _ in open(reviews_path, "r", encoding=config.CSV_ENCODING)) - 1
+            print(f"\n\n{'='*50}")
+            print(f"  ⏸  本批已完成 {new_movies} 部")
+            print(f"  累计: {done}/{len(movies_to_review)} 部  |  ~{rc} 条短评")
+            print(f"  {'='*50}")
+            print(f"  运行 python run_stage3.py 继续下一批")
+            sys.exit(0)
     else:
         fail_count += 1
         if fail_count <= 2:
