@@ -11,5 +11,10 @@
 *.docx
 *.csv
 
+# 个人文件（不提交）
+个人实验6/
+.ipynb_checkpoints/
+*.zip
+
 # 例外：豆瓣爬虫采集的数据需要入库
 !douban_crawler/data/*.csv
