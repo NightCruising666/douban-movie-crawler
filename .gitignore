@@ -10,3 +10,6 @@
 *.pdf
 *.docx
 *.csv
+
+# 例外：豆瓣爬虫采集的数据需要入库
+!douban_crawler/data/*.csv
