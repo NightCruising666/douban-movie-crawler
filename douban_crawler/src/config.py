@@ -105,7 +105,10 @@ CSV_ENCODING = "utf-8-sig"  # utf-8-sig → Excel能正确打开中文
 # ========== 翻页配置 ==========
 
 # 目标电影数
-TARGET_MOVIES = 500
+TARGET_MOVIES = 2478        # 全量采集 raw 中的所有电影
+
+# 每部电影短评数
+REVIEWS_PER_MOVIE = 30      # 阶段三用
 
 # 每部电影拉取的最大短评数（豆瓣短评约200条可见）
 MAX_REVIEWS_PER_MOVIE = 200

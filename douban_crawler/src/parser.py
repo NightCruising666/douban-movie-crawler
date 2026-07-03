@@ -102,7 +102,9 @@ def parse_movie_detail(movie_id):
         "片长": duration_str,
         "豆瓣评分": str(rating_value),
         "评价人数": str(rating_count),
-        "五星占比": "",  # Rexxar API 不直接提供五星占比，后续可从评分分布计算
+        "五星占比": "",  # Rexxar API 不直接提供五星占比
+        "短评总数": str(data.get("comment_count", "")),
+        "长评总数": str(data.get("review_count", "")),
     }
 
     print(f"✓ 《{movie['电影名称']}》评分{movie['豆瓣评分']}")
