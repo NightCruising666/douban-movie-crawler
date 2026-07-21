@@ -73,6 +73,12 @@ def archive_pipeline_files() -> None:
 
 
 def run_stage1(rebuild: bool = False) -> None:
+    # 阶段一会改写阶段二的候选池；重建还会移动阶段二文件，因此共用写锁。
+    with detail_state.Stage2WriteLock():
+        run_stage1_locked(rebuild)
+
+
+def run_stage1_locked(rebuild: bool = False) -> None:
     if rebuild:
         archive_pipeline_files()
 
