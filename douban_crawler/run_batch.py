@@ -170,7 +170,7 @@ def should_stop_after_failures(
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, acquire_lock: bool = True) -> int:
     args = parse_args(argv)
     if (
         args.batch_size <= 0
@@ -184,6 +184,13 @@ def main(argv: list[str] | None = None) -> int:
         or (args.round_number is not None and args.round_number <= 0)
     ):
         raise SystemExit("批量数、冷却间隔和失败上限必须大于0，等待秒数与重试数不能小于0。")
+    if args.status or not acquire_lock:
+        return run_one_batch(args)
+    with detail_state.Stage2WriteLock():
+        return run_one_batch(args)
+
+
+def run_one_batch(args: argparse.Namespace) -> int:
     all_movies = load_raw_movies()
     round_number = args.round_number or detail_state.next_round_number()
     collected = load_collected_ids()

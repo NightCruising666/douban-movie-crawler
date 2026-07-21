@@ -6,11 +6,66 @@ import csv
 import os
 from pathlib import Path
 
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
+
 from . import config
 
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 PERMANENT_HTTP_REASONS = {"HTTP 400", "HTTP 404", "HTTP 410"}
+
+
+class Stage2WriteLock:
+    """所有阶段二写入入口共用的非阻塞文件锁。"""
+
+    def __init__(self, path: Path | None = None):
+        self.path = path
+        self.file = None
+
+    def __enter__(self):
+        path = self.path or (DATA_DIR / ".stage2_continuous.lock")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.file = path.open("a+", encoding="utf-8")
+        try:
+            self._acquire()
+        except OSError as error:
+            self.file.seek(0)
+            owner = self.file.read().strip() or "未知"
+            self.file.close()
+            self.file = None
+            raise RuntimeError(f"阶段二采集程序已在运行，PID={owner}") from error
+
+        self.file.seek(0)
+        self.file.truncate()
+        self.file.write(str(os.getpid()))
+        self.file.flush()
+        os.fsync(self.file.fileno())
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.file is not None:
+            if fcntl is not None:
+                fcntl.flock(self.file.fileno(), fcntl.LOCK_UN)
+            else:  # Windows
+                self.file.seek(0)
+                msvcrt.locking(self.file.fileno(), msvcrt.LK_UNLCK, 1)
+            self.file.close()
+            self.file = None
+
+    def _acquire(self) -> None:
+        if fcntl is not None:
+            fcntl.flock(self.file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        self.file.seek(0)
+        if not self.file.read(1):
+            self.file.write("0")
+            self.file.flush()
+        self.file.seek(0)
+        msvcrt.locking(self.file.fileno(), msvcrt.LK_NBLCK, 1)
 
 
 def _path(relative_path: str) -> Path:
@@ -65,6 +120,11 @@ def _write_unavailable_snapshot(records: list[dict]) -> None:
         unavailable,
         config.DETAIL_FAILURE_FIELDS,
     )
+
+
+def rebuild_unavailable_snapshot() -> None:
+    """按需从事实表重建对外快照；普通读取不会写文件。"""
+    _write_unavailable_snapshot(list(load_failure_records().values()))
 
 
 def load_failure_attempts() -> list[dict]:
@@ -220,7 +280,6 @@ def mark_success(movie_id: str, captured_at: str) -> None:
 
 def load_unavailable_ids() -> set[str]:
     records = list(load_failure_records().values())
-    _write_unavailable_snapshot(records)
     return {
         movie_id
         for movie_id, record in ((record.get("豆瓣ID", ""), record) for record in records)

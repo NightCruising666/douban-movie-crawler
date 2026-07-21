@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest import mock
 
 from douban_crawler import run_stage2_continuous
+from douban_crawler.src import detail_state
 
 
 class Stage2ContinuousTests(unittest.TestCase):
@@ -20,9 +21,9 @@ class Stage2ContinuousTests(unittest.TestCase):
     def test_single_instance_lock_rejects_second_live_process(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "stage2.lock"
-            with run_stage2_continuous.SingleInstanceLock(path):
+            with detail_state.Stage2WriteLock(path):
                 with self.assertRaises(RuntimeError):
-                    with run_stage2_continuous.SingleInstanceLock(path):
+                    with detail_state.Stage2WriteLock(path):
                         pass
 
 

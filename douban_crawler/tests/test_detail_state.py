@@ -89,6 +89,8 @@ class DetailStateTests(unittest.TestCase):
         snapshot.unlink()
 
         self.assertEqual(detail_state.load_unavailable_ids(), {"7"})
+        self.assertFalse(snapshot.exists())
+        detail_state.rebuild_unavailable_snapshot()
         self.assertTrue(snapshot.exists())
         self.assertIn("7", snapshot.read_text(encoding="utf-8-sig"))
 

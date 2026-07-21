@@ -71,6 +71,20 @@ class RunBatchTests(unittest.TestCase):
         args = run_batch.parse_args([])
         self.assertIsNone(args.round_number)
 
+    @mock.patch.object(run_batch, "run_one_batch", return_value=0)
+    @mock.patch.object(run_batch.detail_state, "Stage2WriteLock")
+    def test_write_mode_acquires_shared_stage2_lock(self, lock, run_one_batch):
+        self.assertEqual(run_batch.main([]), 0)
+        lock.assert_called_once_with()
+        run_one_batch.assert_called_once()
+
+    @mock.patch.object(run_batch, "run_one_batch", return_value=0)
+    @mock.patch.object(run_batch.detail_state, "Stage2WriteLock")
+    def test_status_mode_is_read_only_and_does_not_lock(self, lock, run_one_batch):
+        self.assertEqual(run_batch.main(["--status"]), 0)
+        lock.assert_not_called()
+        run_one_batch.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
