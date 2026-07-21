@@ -11,7 +11,7 @@ import requests
 from . import config
 
 
-def safe_get(url, params=None, headers=None, timeout=None):
+def safe_get(url, params=None, headers=None, timeout=None, failure_audit=None):
     """
     安全的GET请求：带重试、带延迟、带异常处理。
 
@@ -25,6 +25,7 @@ def safe_get(url, params=None, headers=None, timeout=None):
         params: URL参数字典（可选）
         headers: 自定义请求头（不传则用config里的默认值）
         timeout: 超时秒数（不传则用config里的默认值）
+        failure_audit: 可选回调，每次底层传输失败时接收原因字符串
 
     返回:
         成功: requests.Response 对象
@@ -47,21 +48,29 @@ def safe_get(url, params=None, headers=None, timeout=None):
 
         except requests.exceptions.SSLError as e:
             # SSL错误：有时是网络波动，重试
+            if failure_audit:
+                failure_audit("SSL错误")
             print(f"  [SSL错误] 第{attempt}次重试... ({e})")
             time.sleep(2)
 
         except requests.exceptions.ConnectionError as e:
             # 连接被拒绝或DNS失败
+            if failure_audit:
+                failure_audit("连接错误")
             print(f"  [连接错误] 第{attempt}次重试... ({e})")
             time.sleep(3)
 
         except requests.exceptions.Timeout as e:
             # 超时
+            if failure_audit:
+                failure_audit("请求超时")
             print(f"  [超时] 第{attempt}次重试... ({e})")
             time.sleep(2)
 
         except requests.exceptions.RequestException as e:
             # 其他所有requests异常
+            if failure_audit:
+                failure_audit("请求异常")
             print(f"  [请求失败] {e}")
             return None
 

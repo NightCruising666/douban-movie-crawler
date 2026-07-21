@@ -127,10 +127,19 @@ def fetch_detail_with_cooldown(
     """请求详情；失败时长冷却后有限重试，避免连续冲击接口。"""
     failed_attempts: list[dict] = []
     for attempt in range(failure_retries + 1):
-        detail, reason = parse_movie_detail_with_reason(movie_id)
+        detail, reason = parse_movie_detail_with_reason(
+            movie_id,
+            transport_attempts=failed_attempts,
+        )
         if detail is not None:
             return detail, failed_attempts
-        failed_attempts.append({"失败原因": reason, "失败时间": now_iso()})
+        failed_attempts.append(
+            {
+                "尝试层级": "电影请求",
+                "失败原因": reason,
+                "失败时间": now_iso(),
+            }
+        )
         if attempt < failure_retries:
             pause = config.random_delay(failure_cooldown_base)
             print(

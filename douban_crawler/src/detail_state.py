@@ -88,6 +88,7 @@ def record_failure_attempts(
             "电影名称": title,
             "轮次": str(round_number),
             "轮内尝试序号": str(index),
+            "尝试层级": attempt.get("尝试层级", "电影请求"),
             "失败原因": attempt.get("失败原因", ""),
             "失败时间": attempt.get("失败时间", ""),
         }

@@ -33,7 +33,9 @@ class RunBatchTests(unittest.TestCase):
 
         self.assertIsNone(actual)
         self.assertEqual([row["失败原因"] for row in attempts], ["网络请求失败"])
-        parse_detail.assert_called_once_with("1")
+        parse_detail.assert_called_once()
+        self.assertEqual(parse_detail.call_args.args, ("1",))
+        self.assertIn("transport_attempts", parse_detail.call_args.kwargs)
         sleep.assert_not_called()
 
     def test_failure_limit_does_not_stop_inside_protection_window(self):
