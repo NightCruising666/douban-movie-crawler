@@ -61,6 +61,8 @@ def archive_pipeline_files() -> None:
         config.MOVIES_CSV,
         config.REVIEWS_CSV,
         config.REVIEW_PROGRESS_CSV,
+        config.DETAIL_FAILURES_CSV,
+        config.UNAVAILABLE_MOVIES_CSV,
         "data/.checkpoint_stage1_tags",
     ):
         source = project_path(relative_path)
@@ -149,10 +151,14 @@ def count_rows(relative_path: str) -> int:
 def print_status() -> None:
     raw_count = count_rows(config.MOVIES_RAW_CSV)
     movie_count = count_rows(config.MOVIES_CSV)
+    unavailable_count = count_rows(config.UNAVAILABLE_MOVIES_CSV)
     review_count = count_rows(config.REVIEWS_CSV)
     print("项目进度")
     print(f"  阶段一电影池: {raw_count} 部")
-    print(f"  阶段二详情:   {movie_count}/{raw_count} 部")
+    print(
+        f"  阶段二详情:   成功 {movie_count} 部，确认不可用 {unavailable_count} 部，"
+        f"已处理 {movie_count + unavailable_count}/{raw_count} 部"
+    )
     print(f"  阶段三短评:   {review_count} 条")
     print("\n继续采集：")
     print("  python douban_crawler/run_batch.py")

@@ -62,8 +62,8 @@ def transform_movie_detail(movie_id: str, data: dict, captured_at: str | None = 
     }
 
 
-def parse_movie_detail(movie_id: str) -> dict | None:
-    """请求详情 API，成功时返回标准化的 15 字段记录。"""
+def parse_movie_detail_with_reason(movie_id: str) -> tuple[dict | None, str]:
+    """请求详情 API，同时返回可持久化的失败原因。"""
     url = f"https://m.douban.com/rexxar/api/v2/movie/{movie_id}"
     headers = {
         **config.HEADERS,
@@ -74,18 +74,24 @@ def parse_movie_detail(movie_id: str) -> dict | None:
     response = safe_get(url, headers=headers)
     if response is None:
         print("✗ 请求失败")
-        return None
+        return None, "网络请求失败"
     if response.status_code != 200:
         print(f"✗ HTTP {response.status_code}")
-        return None
+        return None, f"HTTP {response.status_code}"
 
     try:
         record = transform_movie_detail(movie_id, response.json())
     except (TypeError, ValueError):
         print("✗ JSON解析失败")
-        return None
+        return None, "JSON解析失败"
 
     print(f"✓ 《{record['电影名称']}》评分{record['豆瓣评分']}")
+    return record, ""
+
+
+def parse_movie_detail(movie_id: str) -> dict | None:
+    """兼容旧调用：成功返回详情，失败返回 ``None``。"""
+    record, _ = parse_movie_detail_with_reason(movie_id)
     return record
 
 

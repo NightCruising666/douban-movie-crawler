@@ -18,7 +18,8 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src import config
-from src.parser import parse_movie_detail
+from src import detail_state
+from src.parser import now_iso, parse_movie_detail_with_reason
 from src.saver import append_to_csv
 
 
@@ -51,6 +52,10 @@ def load_collected_ids() -> set[str]:
                 "movies.csv 为旧版表头，请先移入 data/archive 后再运行新版采集。"
             )
         return {row["豆瓣ID"].strip() for row in reader if row.get("豆瓣ID", "").strip()}
+
+
+def load_unavailable_ids() -> set[str]:
+    return detail_state.load_unavailable_ids()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -104,6 +109,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="失败只冷却和跳过，不因连续失败退出；供持续监督模式使用",
     )
+    parser.add_argument("--round-number", type=int, default=1, help="持续监督轮次编号")
     return parser.parse_args(argv)
 
 
@@ -112,12 +118,12 @@ def fetch_detail_with_cooldown(
     *,
     failure_retries: int,
     failure_cooldown_base: float,
-) -> dict | None:
+) -> tuple[dict | None, str]:
     """请求详情；失败时长冷却后有限重试，避免连续冲击接口。"""
     for attempt in range(failure_retries + 1):
-        detail = parse_movie_detail(movie_id)
+        detail, reason = parse_movie_detail_with_reason(movie_id)
         if detail is not None:
-            return detail
+            return detail, ""
         if attempt < failure_retries:
             pause = config.random_delay(failure_cooldown_base)
             print(
@@ -125,7 +131,7 @@ def fetch_detail_with_cooldown(
                 f"进行第 {attempt + 1}/{failure_retries} 次重试"
             )
             time.sleep(pause)
-    return None
+    return None, reason
 
 
 def should_stop_after_failures(
@@ -152,18 +158,27 @@ def main(argv: list[str] | None = None) -> int:
         or args.failure_retries < 0
         or args.max_consecutive_failures <= 0
         or args.minimum_runtime_hours < 0
+        or args.round_number <= 0
     ):
         raise SystemExit("批量数、冷却间隔和失败上限必须大于0，等待秒数与重试数不能小于0。")
     all_movies = load_raw_movies()
     collected = load_collected_ids()
-    pending = [row for row in all_movies if row.get("豆瓣ID", "").strip() not in collected]
+    unavailable = load_unavailable_ids()
+    completed = collected | unavailable
+    pending = [row for row in all_movies if row.get("豆瓣ID", "").strip() not in completed]
 
     if args.status:
-        print(f"总目标: {len(all_movies)} 部  |  已采集: {len(collected)} 部  |  待采集: {len(pending)} 部")
+        print(
+            f"总目标: {len(all_movies)} 部  |  成功详情: {len(collected)} 部"
+            f"  |  确认不可用: {len(unavailable)} 部  |  待处理: {len(pending)} 部"
+        )
         return 0
 
     if not pending:
-        print(f"全部完成：{len(collected)}/{len(all_movies)} 部")
+        print(
+            f"阶段二处理完成：成功 {len(collected)} 部，"
+            f"确认不可用 {len(unavailable)} 部，总计 {len(completed)}/{len(all_movies)}"
+        )
         return 0
 
     batch = pending[: max(1, args.batch_size)]
@@ -180,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
         movie_id = movie.get("豆瓣ID", "").strip()
         delay = config.random_delay(args.delay_base)
         print(f"[{index}/{len(batch)}] ({delay:.1f}s)", end=" ")
-        detail = fetch_detail_with_cooldown(
+        detail, failure_reason = fetch_detail_with_cooldown(
             movie_id,
             failure_retries=args.failure_retries,
             failure_cooldown_base=args.failure_cooldown_base,
@@ -189,15 +204,26 @@ def main(argv: list[str] | None = None) -> int:
         if detail:
             append_to_csv([detail], config.MOVIES_CSV, config.MOVIE_FIELDS)
             collected.add(movie_id)
+            detail_state.mark_success(movie_id, detail.get("采集时间") or now_iso())
             new_count += 1
             consecutive_failed_movies = 0
             time.sleep(delay)
             continue
 
         consecutive_failed_movies += 1
+        failure_state = detail_state.record_failure(
+            movie_id,
+            movie.get("电影名称", ""),
+            failure_reason,
+            args.round_number,
+            now_iso(),
+        )
+        if failure_state["状态"] == "不可用":
+            unavailable.add(movie_id)
         print(
             f"  该电影冷却重试后仍失败，暂时跳过；"
-            f"连续失败电影 {consecutive_failed_movies}/{args.max_consecutive_failures}"
+            f"连续失败电影 {consecutive_failed_movies}/{args.max_consecutive_failures}；"
+            f"跨轮状态={failure_state['状态']}"
         )
         elapsed_seconds = time.monotonic() - run_started_at
         if not args.never_stop_on_failure and should_stop_after_failures(
@@ -224,8 +250,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  继续下一部前再冷却 {pause / 60:.1f} 分钟")
         time.sleep(pause)
 
-    remaining = len(all_movies) - len(collected)
-    print(f"\n本批新增: {new_count} 部  |  累计: {len(collected)}/{len(all_movies)}  |  剩余: {remaining} 部")
+    completed_count = len(collected | unavailable)
+    remaining = len(all_movies) - completed_count
+    print(
+        f"\n本批新增: {new_count} 部  |  成功: {len(collected)}"
+        f"  |  确认不可用: {len(unavailable)}"
+        f"  |  已处理: {completed_count}/{len(all_movies)}  |  待处理: {remaining} 部"
+    )
     return 0
 
 

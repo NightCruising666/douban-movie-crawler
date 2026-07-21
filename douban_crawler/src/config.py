@@ -90,6 +90,8 @@ MOVIE_TAGS_CSV = "data/movie_tags.csv"
 MOVIES_CSV = "data/movies.csv"
 REVIEWS_CSV = "data/reviews.csv"
 REVIEW_PROGRESS_CSV = "data/review_progress.csv"
+DETAIL_FAILURES_CSV = "data/detail_failures.csv"
+UNAVAILABLE_MOVIES_CSV = "data/unavailable_movies.csv"
 
 
 # ==================== CSV 表头 ====================
@@ -137,4 +139,18 @@ REVIEW_PROGRESS_FIELDS = [
     "已采集数",
     "状态",
     "更新时间",
+]
+
+DETAIL_FAILURE_FIELDS = [
+    "豆瓣ID",
+    "电影名称",
+    "最后失败原因",
+    "首次失败轮次",
+    "最后失败轮次",
+    "失败轮次数",
+    "永久失败轮次数",
+    "连续永久失败轮次数",
+    "状态",
+    "首次失败时间",
+    "最后更新时间",
 ]

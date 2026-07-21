@@ -10,8 +10,12 @@ from __future__ import annotations
 import argparse
 import time
 
-import run_batch
-from src import config
+try:
+    from . import run_batch
+    from .src import config, detail_state
+except ImportError:  # 直接执行脚本时使用当前目录导入
+    import run_batch
+    from src import config, detail_state
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,10 +30,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def progress() -> tuple[int, int]:
+def progress() -> tuple[int, int, int]:
     total = len(run_batch.load_raw_movies())
     collected = len(run_batch.load_collected_ids())
-    return collected, total
+    unavailable = len(run_batch.load_unavailable_ids())
+    return collected, unavailable, total
 
 
 def main() -> int:
@@ -43,15 +48,22 @@ def main() -> int:
     ) < 0 or args.cooldown_every <= 0 or args.failure_retries < 0:
         raise SystemExit("等待秒数不能小于0，冷却间隔必须大于0。")
 
-    round_number = 0
+    round_number = detail_state.next_round_number() - 1
     while True:
-        before, total = progress()
-        if before >= total:
-            print(f"阶段二全部完成：{before}/{total}")
+        before_success, before_unavailable, total = progress()
+        before_completed = before_success + before_unavailable
+        if before_completed >= total:
+            print(
+                f"阶段二全部完成：成功 {before_success}，"
+                f"确认不可用 {before_unavailable}，总计 {before_completed}/{total}"
+            )
             return 0
 
         round_number += 1
-        print(f"\n[持续监督] 第 {round_number} 轮开始：{before}/{total}")
+        print(
+            f"\n[持续监督] 第 {round_number} 轮开始：成功 {before_success}，"
+            f"确认不可用 {before_unavailable}，已处理 {before_completed}/{total}"
+        )
         run_batch.main(
             [
                 "--batch-size", str(total),
@@ -61,20 +73,26 @@ def main() -> int:
                 "--failure-cooldown-base", str(args.failure_cooldown_base),
                 "--failure-retries", str(args.failure_retries),
                 "--never-stop-on-failure",
+                "--round-number", str(round_number),
             ]
         )
 
-        after, total = progress()
-        if after >= total:
-            print(f"阶段二全部完成：{after}/{total}")
+        after_success, after_unavailable, total = progress()
+        after_completed = after_success + after_unavailable
+        if after_completed >= total:
+            print(
+                f"阶段二全部完成：成功 {after_success}，"
+                f"确认不可用 {after_unavailable}，总计 {after_completed}/{total}"
+            )
             return 0
 
-        made_progress = after > before
+        made_progress = after_completed > before_completed
         base = args.round_cooldown_base if made_progress else args.stagnant_cooldown_base
         pause = config.random_delay(base)
         reason = "本轮有新增" if made_progress else "本轮无新增"
         print(
-            f"[持续监督] {reason}，当前 {after}/{total}；"
+            f"[持续监督] {reason}，当前成功 {after_success}、"
+            f"确认不可用 {after_unavailable}、已处理 {after_completed}/{total}；"
             f"等待 {pause / 60:.1f} 分钟后自动补采缺失ID"
         )
         time.sleep(pause)

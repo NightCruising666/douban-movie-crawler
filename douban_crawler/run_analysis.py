@@ -304,6 +304,31 @@ def analyze_tag_coverage(movies: pd.DataFrame) -> None:
     save_table(coverage, "yearly_tag_coverage.csv")
 
 
+def add_collection_quality(summary: list[dict]) -> None:
+    """汇总阶段二不可用条目，供报告披露样本损失。"""
+    raw_path = ROOT / "data" / "movies_raw.csv"
+    unavailable_path = ROOT / "data" / "unavailable_movies.csv"
+    if not raw_path.exists():
+        return
+    raw_count = len(pd.read_csv(raw_path, encoding="utf-8-sig"))
+    unavailable_count = (
+        len(pd.read_csv(unavailable_path, encoding="utf-8-sig"))
+        if unavailable_path.exists()
+        else 0
+    )
+    summary.extend(
+        [
+            {"分析模块": "数据质量", "指标": "阶段一候选电影数", "数值": raw_count},
+            {"分析模块": "数据质量", "指标": "阶段二确认不可用数", "数值": unavailable_count},
+            {
+                "分析模块": "数据质量",
+                "指标": "阶段二不可用比例",
+                "数值": unavailable_count / raw_count if raw_count else math.nan,
+            },
+        ]
+    )
+
+
 def main() -> int:
     movie_path = PROCESSED_DIR / "movies_cleaned.csv"
     if not movie_path.exists():
@@ -317,6 +342,7 @@ def main() -> int:
     analyze_review_metrics(movies, summary)
     analyze_genre_and_origin(movies, summary)
     analyze_tag_coverage(movies)
+    add_collection_quality(summary)
     save_table(pd.DataFrame(summary), "analysis_summary.csv")
     print(f"分析完成，结果目录: {OUTPUT_DIR}")
     return 0
