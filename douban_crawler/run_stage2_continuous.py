@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import time
+from pathlib import Path
 
 try:
     from . import run_batch
@@ -16,6 +18,42 @@ try:
 except ImportError:  # 直接执行脚本时使用当前目录导入
     import run_batch
     from src import config, detail_state
+
+
+LOCK_PATH = Path(__file__).resolve().parent / "data" / ".stage2_continuous.lock"
+
+
+class SingleInstanceLock:
+    """防止两个阶段二监督器并发改写CSV。"""
+
+    def __init__(self, path: Path = LOCK_PATH):
+        self.path = path
+        self.acquired = False
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        for _ in range(2):
+            try:
+                descriptor = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                try:
+                    existing_pid = int(self.path.read_text(encoding="utf-8").strip())
+                    os.kill(existing_pid, 0)
+                except (OSError, ValueError):
+                    self.path.unlink(missing_ok=True)
+                    continue
+                raise RuntimeError(f"阶段二持续监督器已在运行，PID={existing_pid}")
+            else:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+                    file.write(str(os.getpid()))
+                self.acquired = True
+                return self
+        raise RuntimeError("无法获取阶段二单实例锁")
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.acquired:
+            self.path.unlink(missing_ok=True)
+        self.acquired = False
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,6 +86,11 @@ def main() -> int:
     ) < 0 or args.cooldown_every <= 0 or args.failure_retries < 0:
         raise SystemExit("等待秒数不能小于0，冷却间隔必须大于0。")
 
+    with SingleInstanceLock():
+        return run_continuous(args)
+
+
+def run_continuous(args: argparse.Namespace) -> int:
     round_number = detail_state.next_round_number() - 1
     while True:
         before_success, before_unavailable, total = progress()

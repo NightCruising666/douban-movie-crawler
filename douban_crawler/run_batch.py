@@ -123,17 +123,24 @@ def fetch_detail_with_cooldown(
     *,
     failure_retries: int,
     failure_cooldown_base: float,
+    on_failed_attempt=None,
 ) -> tuple[dict | None, list[dict]]:
     """请求详情；失败时长冷却后有限重试，避免连续冲击接口。"""
     failed_attempts: list[dict] = []
+
+    def audit_attempt(attempt_record: dict) -> None:
+        failed_attempts.append(attempt_record)
+        if on_failed_attempt is not None:
+            on_failed_attempt(len(failed_attempts), attempt_record)
+
     for attempt in range(failure_retries + 1):
         detail, reason = parse_movie_detail_with_reason(
             movie_id,
-            transport_attempts=failed_attempts,
+            failure_audit=audit_attempt,
         )
         if detail is not None:
             return detail, failed_attempts
-        failed_attempts.append(
+        audit_attempt(
             {
                 "尝试层级": "电影请求",
                 "失败原因": reason,
@@ -212,18 +219,21 @@ def main(argv: list[str] | None = None) -> int:
         movie_id = movie.get("豆瓣ID", "").strip()
         delay = config.random_delay(args.delay_base)
         print(f"[{index}/{len(batch)}] ({delay:.1f}s)", end=" ")
+        def persist_failed_attempt(attempt_number: int, attempt_record: dict) -> None:
+            detail_state.record_failure_attempt(
+                movie_id,
+                movie.get("电影名称", ""),
+                round_number,
+                attempt_number,
+                attempt_record,
+            )
+
         detail, failed_attempts = fetch_detail_with_cooldown(
             movie_id,
             failure_retries=args.failure_retries,
             failure_cooldown_base=args.failure_cooldown_base,
+            on_failed_attempt=persist_failed_attempt,
         )
-        if failed_attempts:
-            detail_state.record_failure_attempts(
-                movie_id,
-                movie.get("电影名称", ""),
-                round_number,
-                failed_attempts,
-            )
 
         if detail:
             append_to_csv([detail], config.MOVIES_CSV, config.MOVIE_FIELDS)

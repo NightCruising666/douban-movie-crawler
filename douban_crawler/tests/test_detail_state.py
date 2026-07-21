@@ -70,6 +70,16 @@ class DetailStateTests(unittest.TestCase):
         self.assertEqual([row["轮内尝试序号"] for row in records], ["1", "2"])
         self.assertEqual(records[1]["失败时间"], "2026-01-01T00:15:00+08:00")
 
+    def test_unavailable_snapshot_is_rebuilt_from_failure_facts(self):
+        detail_state.record_failure("7", "电影", "HTTP 404", 1, "2026-01-01T00:00:00+08:00")
+        detail_state.record_failure("7", "电影", "HTTP 404", 2, "2026-01-02T00:00:00+08:00")
+        snapshot = Path(self.tempdir.name) / "unavailable_movies.csv"
+        snapshot.unlink()
+
+        self.assertEqual(detail_state.load_unavailable_ids(), {"7"})
+        self.assertTrue(snapshot.exists())
+        self.assertIn("7", snapshot.read_text(encoding="utf-8-sig"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -307,15 +307,15 @@ def analyze_tag_coverage(movies: pd.DataFrame) -> None:
 def add_collection_quality(summary: list[dict]) -> None:
     """汇总阶段二不可用条目，供报告披露样本损失。"""
     raw_path = ROOT / "data" / "movies_raw.csv"
-    unavailable_path = ROOT / "data" / "unavailable_movies.csv"
+    failures_path = ROOT / "data" / "detail_failures.csv"
     if not raw_path.exists():
         return
     raw_count = len(pd.read_csv(raw_path, encoding="utf-8-sig"))
-    unavailable_count = (
-        len(pd.read_csv(unavailable_path, encoding="utf-8-sig"))
-        if unavailable_path.exists()
-        else 0
-    )
+    if failures_path.exists():
+        failures = pd.read_csv(failures_path, encoding="utf-8-sig")
+        unavailable_count = int((failures["状态"] == "不可用").sum())
+    else:
+        unavailable_count = 0
     summary.extend(
         [
             {"分析模块": "数据质量", "指标": "阶段一候选电影数", "数值": raw_count},

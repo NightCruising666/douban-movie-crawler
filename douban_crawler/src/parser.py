@@ -64,7 +64,7 @@ def transform_movie_detail(movie_id: str, data: dict, captured_at: str | None = 
 
 def parse_movie_detail_with_reason(
     movie_id: str,
-    transport_attempts: list[dict] | None = None,
+    failure_audit=None,
 ) -> tuple[dict | None, str]:
     """请求详情 API，同时返回可持久化的失败原因。"""
     url = f"https://m.douban.com/rexxar/api/v2/movie/{movie_id}"
@@ -75,8 +75,8 @@ def parse_movie_detail_with_reason(
 
     print(f"  请求详情API: {movie_id} ...", end=" ", flush=True)
     def audit_transport_failure(reason: str) -> None:
-        if transport_attempts is not None:
-            transport_attempts.append(
+        if failure_audit is not None:
+            failure_audit(
                 {
                     "尝试层级": "传输重试",
                     "失败原因": reason,

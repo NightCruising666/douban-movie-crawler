@@ -6,6 +6,7 @@ data/.checkpoint_*
 data/processed/
 data/analysis/
 logs/
+data/.stage2_continuous.lock
 
 # Python
 __pycache__/

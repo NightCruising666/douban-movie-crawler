@@ -35,8 +35,27 @@ class RunBatchTests(unittest.TestCase):
         self.assertEqual([row["失败原因"] for row in attempts], ["网络请求失败"])
         parse_detail.assert_called_once()
         self.assertEqual(parse_detail.call_args.args, ("1",))
-        self.assertIn("transport_attempts", parse_detail.call_args.kwargs)
+        self.assertIn("failure_audit", parse_detail.call_args.kwargs)
         sleep.assert_not_called()
+
+    @mock.patch.object(run_batch.time, "sleep", side_effect=KeyboardInterrupt)
+    @mock.patch.object(
+        run_batch, "parse_movie_detail_with_reason", return_value=(None, "HTTP 400")
+    )
+    def test_failure_is_persisted_before_long_cooldown(self, parse_detail, sleep):
+        recorder = mock.Mock()
+
+        with self.assertRaises(KeyboardInterrupt):
+            run_batch.fetch_detail_with_cooldown(
+                "1",
+                failure_retries=1,
+                failure_cooldown_base=900,
+                on_failed_attempt=recorder,
+            )
+
+        recorder.assert_called_once()
+        self.assertEqual(recorder.call_args.args[0], 1)
+        self.assertEqual(recorder.call_args.args[1]["失败原因"], "HTTP 400")
 
     def test_failure_limit_does_not_stop_inside_protection_window(self):
         self.assertFalse(run_batch.should_stop_after_failures(3, 3, 2.9 * 3600, 3))

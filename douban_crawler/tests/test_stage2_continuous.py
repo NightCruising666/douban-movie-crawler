@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 from unittest import mock
 
 from douban_crawler import run_stage2_continuous
@@ -14,6 +16,14 @@ class Stage2ContinuousTests(unittest.TestCase):
     )
     def test_progress_separates_success_and_unavailable(self, raw, collected, unavailable):
         self.assertEqual(run_stage2_continuous.progress(), (1, 1, 3))
+
+    def test_single_instance_lock_rejects_second_live_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "stage2.lock"
+            with run_stage2_continuous.SingleInstanceLock(path):
+                with self.assertRaises(RuntimeError):
+                    with run_stage2_continuous.SingleInstanceLock(path):
+                        pass
 
 
 if __name__ == "__main__":

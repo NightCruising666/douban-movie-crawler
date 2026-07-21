@@ -13,7 +13,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from src import config
+from src import config, detail_state
 from src.crawler import extract_movie_id, fetch_all_movies_for_tag_with_status
 from src.parser import now_iso
 from src.saver import append_to_csv
@@ -152,7 +152,7 @@ def count_rows(relative_path: str) -> int:
 def print_status() -> None:
     raw_count = count_rows(config.MOVIES_RAW_CSV)
     movie_count = count_rows(config.MOVIES_CSV)
-    unavailable_count = count_rows(config.UNAVAILABLE_MOVIES_CSV)
+    unavailable_count = len(detail_state.load_unavailable_ids())
     review_count = count_rows(config.REVIEWS_CSV)
     print("项目进度")
     print(f"  阶段一电影池: {raw_count} 部")

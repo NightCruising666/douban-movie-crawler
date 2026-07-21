@@ -54,6 +54,11 @@ def load_failure_records() -> dict[str, dict]:
 def _save_states(states: dict[str, dict]) -> None:
     records = list(states.values())
     _write_records(_path(config.DETAIL_FAILURES_CSV), records, config.DETAIL_FAILURE_FIELDS)
+    _write_unavailable_snapshot(records)
+
+
+def _write_unavailable_snapshot(records: list[dict]) -> None:
+    """从唯一事实源派生可重建的不可用电影快照。"""
     unavailable = [record for record in records if record.get("状态") == "不可用"]
     _write_records(
         _path(config.UNAVAILABLE_MOVIES_CSV),
@@ -93,6 +98,36 @@ def record_failure_attempts(
             "失败时间": attempt.get("失败时间", ""),
         }
         keyed[(movie_id, str(round_number), str(index))] = row
+    _write_records(
+        _path(config.DETAIL_FAILURE_ATTEMPTS_CSV),
+        list(keyed.values()),
+        config.DETAIL_FAILURE_ATTEMPT_FIELDS,
+    )
+
+
+def record_failure_attempt(
+    movie_id: str,
+    title: str,
+    round_number: int,
+    attempt_number: int,
+    attempt: dict,
+) -> None:
+    """立即保存一次失败，确保进入长冷却前已有审计断点。"""
+    records = load_failure_attempts()
+    keyed = {
+        (row.get("豆瓣ID", ""), row.get("轮次", ""), row.get("轮内尝试序号", "")): row
+        for row in records
+    }
+    row = {
+        "豆瓣ID": movie_id,
+        "电影名称": title,
+        "轮次": str(round_number),
+        "轮内尝试序号": str(attempt_number),
+        "尝试层级": attempt.get("尝试层级", "电影请求"),
+        "失败原因": attempt.get("失败原因", ""),
+        "失败时间": attempt.get("失败时间", ""),
+    }
+    keyed[(movie_id, str(round_number), str(attempt_number))] = row
     _write_records(
         _path(config.DETAIL_FAILURE_ATTEMPTS_CSV),
         list(keyed.values()),
@@ -174,9 +209,11 @@ def mark_success(movie_id: str, captured_at: str) -> None:
 
 
 def load_unavailable_ids() -> set[str]:
+    records = list(load_failure_records().values())
+    _write_unavailable_snapshot(records)
     return {
         movie_id
-        for movie_id, record in load_failure_records().items()
+        for movie_id, record in ((record.get("豆瓣ID", ""), record) for record in records)
         if record.get("状态") == "不可用"
     }
 
