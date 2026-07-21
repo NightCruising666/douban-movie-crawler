@@ -1,13 +1,16 @@
-"""
-豆瓣爬虫配置文件
-==============
-集中管理所有可调参数，方便后期修改。
-不要在各个模块里硬编码URL和参数！
+"""项目配置与数据契约。
+
+所有采集脚本共用本文件中的路径、字段和速率参数，避免同一个 CSV
+在不同脚本中出现不同表头。
 """
 
-# ========== HTTP请求配置 ==========
+from __future__ import annotations
 
-# User-Agent：模拟浏览器身份。豆瓣不检查UA时用这个就够了。
+import random
+
+
+# ==================== HTTP ====================
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -18,57 +21,30 @@ HEADERS = {
     "Accept-Language": "zh-CN,zh;q=0.9",
 }
 
-# 请求超时时间（秒）
 REQUEST_TIMEOUT = 10
-
-# ========== 请求间隔 & 随机延迟 ==========
-# 为什么用随机延迟？
-#   固定间隔容易被反爬系统识别为机器行为（周期性规律）
-#   随机 ±30% 的抖动模拟人类阅读页面的自然节奏
-#   反爬系统的行为分析会降低对"有波动"请求的敏感度
-
-import random as _random
-
-def random_delay(base):
-    """在基准延迟上添加 ±30% 随机抖动"""
-    jitter = base * 0.3
-    return base + _random.uniform(-jitter, jitter)
-
-# 搜索API（阶段一）：基础 2 秒 ± 30% → 1.4~2.6 秒
-SEARCH_DELAY_BASE = 2.0
-
-# Rexxar API（阶段二/三）：基础 5 秒 ± 30% → 3.5~6.5 秒
-#   从 3s 提升到 5s，降低单 IP 请求速率
-DETAIL_DELAY_BASE = 5.0
-
-# 主动冷却：每 N 部成功后强制休息（给 IP 缓冲时间）
-COOLDOWN_EVERY_N = 15       # 每 15 部
-COOLDOWN_SECONDS = 45       # 休息 45 秒
-
-# 连续失败后的冷却（豆瓣硬限后需要更长时间恢复）
-FAIL_PAUSE_SHORT = 10       # 1-3次失败：等 10 秒
-FAIL_PAUSE_MEDIUM = 45      # 4-6次失败：等 45 秒
-FAIL_PAUSE_LONG = 120       # 7-9次失败：等 2 分钟
-FAIL_PAUSE_HARD = 600       # ≥10次失败：等 10 分钟（IP级别限制）
-
-# 请求失败后最大重试次数
 MAX_RETRIES = 3
 
-# ========== 豆瓣API配置 ==========
 
-# 豆瓣电影搜索API
-# 参数: type=movie, tag=标签名, page_limit=每页数, page_start=偏移量
+def random_delay(base: float) -> float:
+    """在基准延迟上添加 ±30% 随机抖动。"""
+    jitter = base * 0.3
+    return base + random.uniform(-jitter, jitter)
+
+
+SEARCH_DELAY_BASE = 2.0
+DETAIL_DELAY_BASE = 5.0
+COOLDOWN_EVERY_N = 15
+COOLDOWN_SECONDS = 45
+FAIL_PAUSE_SHORT = 10
+FAIL_PAUSE_MEDIUM = 45
+
+
+# ==================== API 与采集范围 ====================
+
 SEARCH_API = "https://movie.douban.com/j/search_subjects"
-
-# 单次请求返回条数（豆瓣上限是20）
 PAGE_SIZE = 20
-
-# 每个标签最多可获取的记录数（豆瓣限制约200条）
 MAX_PER_TAG = 200
-
-# ========== 电影标签列表 ==========
-# 用于翻页采集时按标签遍历。
-# 相邻标签会有重复电影，需要在保存前去重。
+BATCH_SIZE = 100
 
 MOVIE_TAGS = [
     "热门",
@@ -92,23 +68,71 @@ MOVIE_TAGS = [
     "纪录片",
 ]
 
-# ========== 输出配置 ==========
+# 热门评论反映社区高认可观点；时间排序评论用于降低只采热评的偏差。
+# 若豆瓣忽略 time 排序，采集后的重复率检查会在清洗报告中暴露该问题。
+REVIEW_SAMPLING_PLAN = (
+    {"label": "热门", "order_by": "hot", "limit": 15},
+    {"label": "时间", "order_by": "time", "limit": 15},
+)
 
-# CSV保存路径（相对于项目根目录）
-MOVIES_RAW_CSV = "data/movies_raw.csv"   # 阶段一原始列表（全部去重电影）
-MOVIES_CSV = "data/movies.csv"           # 阶段二电影详情
-REVIEWS_CSV = "data/reviews.csv"         # 阶段三短评
+TARGET_MOVIES = None  # None = movies_raw.csv 全量
+ANONYMIZATION_SALT = "douban-course-project-v1"  # 非密钥，仅用于稳定匿名化
 
-# CSV编码
-CSV_ENCODING = "utf-8-sig"  # utf-8-sig → Excel能正确打开中文
 
-# ========== 翻页配置 ==========
+# ==================== 路径 ====================
 
-# 目标电影数
-TARGET_MOVIES = 2478        # 全量采集 raw 中的所有电影
+CSV_ENCODING = "utf-8-sig"
+MOVIES_RAW_CSV = "data/movies_raw.csv"
+MOVIE_TAGS_CSV = "data/movie_tags.csv"
+MOVIES_CSV = "data/movies.csv"
+REVIEWS_CSV = "data/reviews.csv"
+REVIEW_PROGRESS_CSV = "data/review_progress.csv"
 
-# 每部电影短评数
-REVIEWS_PER_MOVIE = 30      # 阶段三用
 
-# 每部电影拉取的最大短评数（豆瓣短评约200条可见）
-MAX_REVIEWS_PER_MOVIE = 200
+# ==================== CSV 表头 ====================
+
+RAW_MOVIE_FIELDS = ["豆瓣ID", "电影名称", "搜索评分", "URL", "采集时间"]
+
+MOVIE_TAG_FIELDS = ["豆瓣ID", "标签", "标签内排名", "采集时间"]
+
+MOVIE_FIELDS = [
+    "豆瓣ID",
+    "电影名称",
+    "原始片名",
+    "导演",
+    "主演",
+    "上映年份",
+    "首映日期",
+    "类型",
+    "国家/地区",
+    "片长",
+    "豆瓣评分",
+    "评价人数",
+    "短评总数",
+    "长评总数",
+    "采集时间",
+]
+
+REVIEW_FIELDS = [
+    "短评ID",
+    "豆瓣ID",
+    "电影名称",
+    "用户匿名标识",
+    "评分",
+    "短评正文",
+    "有用数",
+    "评论时间",
+    "采样方式",
+    "排序位置",
+    "采集时间",
+]
+
+REVIEW_PROGRESS_FIELDS = [
+    "豆瓣ID",
+    "电影名称",
+    "采样方式",
+    "目标数",
+    "已采集数",
+    "状态",
+    "更新时间",
+]

@@ -1,211 +1,207 @@
-"""
-数据解析模块（API版）
-==================
-豆瓣移动版提供了 JSON API，比 HTML 解析更稳定、更快速。
+"""豆瓣 JSON API 解析与记录标准化。"""
 
-三个核心 API:
-  1. 搜索API: /j/search_subjects          → 电影列表
-  2. 详情API: /rexxar/api/v2/movie/{id}   → 电影10字段
-  3. 评论API: /rexxar/api/v2/movie/{id}/interests → 短评数据
+from __future__ import annotations
 
-优缺点对比:
-  HTML解析: 依赖页面结构，豆瓣改版就失效
-  API调用:   返回JSON，结构稳定，字段规范
-"""
+import hashlib
+from datetime import datetime
+from typing import Iterable
 
 from . import config
 from .crawler import safe_get
 
 
-# ==================== 电影详情 ====================
+def now_iso() -> str:
+    """返回带时区的本地采集时间。"""
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
-def parse_movie_detail(movie_id):
-    """
-    从豆瓣 Rexxar API 获取电影详情，提取10个字段。
 
-    API: https://m.douban.com/rexxar/api/v2/movie/{movie_id}
+def _join_names(items: Iterable[dict], limit: int | None = None) -> str:
+    values = list(items)
+    if limit is not None:
+        values = values[:limit]
+    return " / ".join(str(item.get("name", "")).strip() for item in values if item.get("name"))
 
-    返回JSON结构:
-    {
-      "title": "痴迷",
-      "original_title": "Obsession",
-      "year": 2025,
-      "genres": ["恐怖"],
-      "countries": ["美国"],
-      "durations": ["108分钟"],
-      "directors": [{"name": "库里·巴克"}],
-      "actors": [{"name": "迈克尔·约翰斯顿"}, ...],
-      "rating": {"value": 7.7, "count": 15087, "max": 10, "star_count": 4.0},
-      "intro": "剧情简介文字..."
+
+def transform_movie_detail(movie_id: str, data: dict, captured_at: str | None = None) -> dict:
+    """将详情 API JSON 转换为稳定的电影表记录。"""
+    rating = data.get("rating") or {}
+    release_date = data.get("release_date") or data.get("pubdate") or ""
+
+    return {
+        "豆瓣ID": str(movie_id),
+        "电影名称": str(data.get("title", "")),
+        "原始片名": str(data.get("original_title", "")),
+        "导演": _join_names(data.get("directors") or []),
+        "主演": _join_names(data.get("actors") or [], limit=15),
+        "上映年份": str(data.get("year", "")),
+        "首映日期": str(release_date),
+        "类型": " / ".join(data.get("genres") or []),
+        "国家/地区": " / ".join(data.get("countries") or []),
+        "片长": " / ".join(data.get("durations") or []),
+        "豆瓣评分": str(rating.get("value", "")),
+        "评价人数": str(rating.get("count", "")),
+        "短评总数": str(data.get("comment_count", "")),
+        "长评总数": str(data.get("review_count", "")),
+        "采集时间": captured_at or now_iso(),
     }
 
-    参数:
-        movie_id: 豆瓣电影ID（如 "37450627"）
 
-    返回:
-        dict: 10个字段的字典；失败返回 None
-    """
+def parse_movie_detail(movie_id: str) -> dict | None:
+    """请求详情 API，成功时返回标准化的 15 字段记录。"""
     url = f"https://m.douban.com/rexxar/api/v2/movie/{movie_id}"
-
-    print(f"  请求详情API: {movie_id} ...", end=" ", flush=True)
-
-    # 移动API需要特殊的请求头
-    api_headers = {
+    headers = {
         **config.HEADERS,
         "Referer": f"https://m.douban.com/movie/subject/{movie_id}/",
     }
 
-    response = safe_get(url, headers=api_headers)
-
+    print(f"  请求详情API: {movie_id} ...", end=" ", flush=True)
+    response = safe_get(url, headers=headers)
     if response is None or response.status_code != 200:
         print("✗ 请求失败")
         return None
 
     try:
-        data = response.json()
-    except Exception:
+        record = transform_movie_detail(movie_id, response.json())
+    except (TypeError, ValueError):
         print("✗ JSON解析失败")
         return None
 
-    # 提取导演（列表 → 逗号分隔字符串）
-    directors = data.get("directors", [])
-    director_str = " / ".join(d.get("name", "") for d in directors)
+    print(f"✓ 《{record['电影名称']}》评分{record['豆瓣评分']}")
+    return record
 
-    # 提取主演（取前15个，太多了CSV不好看）
-    actors = data.get("actors", [])
-    actor_str = " / ".join(a.get("name", "") for a in actors[:15])
 
-    # 提取评分
-    rating_data = data.get("rating", {})
-    rating_value = rating_data.get("value", "")
-    rating_count = rating_data.get("count", "")
+def _user_identity(user: dict) -> str:
+    for key in ("id", "uid", "uri", "name"):
+        value = user.get(key)
+        if value:
+            return str(value)
+    return ""
 
-    # 拼接类型
-    genres = data.get("genres", [])
-    genre_str = " / ".join(genres)
 
-    # 拼接国家
-    countries = data.get("countries", [])
-    country_str = " / ".join(countries)
+def anonymize_user(user: dict) -> str:
+    """只保留不可逆的稳定摘要，不将公开用户名写入分析数据。"""
+    identity = _user_identity(user)
+    if not identity:
+        return ""
+    raw = f"{config.ANONYMIZATION_SALT}:{identity}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:16]
 
-    # 拼接片长
-    durations = data.get("durations", [])
-    duration_str = " / ".join(durations)
 
-    movie = {
-        "电影名称": data.get("title", ""),
-        "导演": director_str,
-        "主演": actor_str,
-        "上映年份": str(data.get("year", "")),
-        "类型": genre_str,
-        "国家/地区": country_str,
-        "片长": duration_str,
-        "豆瓣评分": str(rating_value),
-        "评价人数": str(rating_count),
-        "五星占比": "",  # Rexxar API 不直接提供五星占比
-        "短评总数": str(data.get("comment_count", "")),
-        "长评总数": str(data.get("review_count", "")),
+def transform_review_item(
+    movie_id: str,
+    movie_title: str,
+    item: dict,
+    sample_label: str,
+    rank: int,
+    captured_at: str | None = None,
+) -> dict:
+    """将短评 API 条目转换为匿名化的标准记录。"""
+    rating = item.get("rating") or {}
+    value = rating.get("value")
+    stars = f"{int(value)}星" if value not in (None, "") else "未评分"
+
+    return {
+        "短评ID": str(item.get("id", "")),
+        "豆瓣ID": str(movie_id),
+        "电影名称": movie_title,
+        "用户匿名标识": anonymize_user(item.get("user") or {}),
+        "评分": stars,
+        "短评正文": str(item.get("comment", "")),
+        "有用数": str(item.get("vote_count", 0)),
+        "评论时间": str(item.get("create_time", "")),
+        "采样方式": sample_label,
+        "排序位置": str(rank),
+        "采集时间": captured_at or now_iso(),
     }
 
-    print(f"✓ 《{movie['电影名称']}》评分{movie['豆瓣评分']}")
-    return movie
 
-
-# ==================== 短评采集 ====================
-
-def parse_movie_reviews(movie_id, movie_title, max_reviews=None):
+def fetch_review_sample(
+    movie_id: str,
+    movie_title: str,
+    *,
+    sample_label: str,
+    order_by: str,
+    rank_limit: int,
+    existing_keys: set[tuple[str, str]] | None = None,
+) -> dict:
     """
-    从豆瓣 Rexxar API 获取电影短评。
+    采集一个排序口径下的前 ``rank_limit`` 条短评。
 
-    API: https://m.douban.com/rexxar/api/v2/movie/{movie_id}/interests
-
-    返回JSON结构:
-    {
-      "total": 1234,
-      "start": 0,
-      "count": 20,
-      "interests": [
-        {
-          "comment": "短评正文",
-          "create_time": "2026-05-16 06:10:44",
-          "rating": {"value": 5, "max": 5},   # 用户打分(1-5星)
-          "user": {"name": "用户名"},
-          "vote_count": 123                     # 有用数
-        },
-        ...
-      ]
-    }
-
-    参数:
-        movie_id:    豆瓣电影ID（字符串）
-        movie_title: 电影名称（用于CSV记录）
-        max_reviews: 最多获取数
-
-    返回:
-        list[dict]: 短评列表，每条约6个字段
+    返回 ``records``、``exhausted`` 和 ``request_failed``，供阶段三脚本保存
+    分采样方式的断点状态。
     """
-    if max_reviews is None:
-        max_reviews = config.MAX_REVIEWS_PER_MOVIE
-
-    all_reviews = []
+    existing_keys = existing_keys or set()
+    records: list[dict] = []
     start = 0
-    count_per_page = 20  # API每页20条
+    page_size = 20
+    exhausted = False
 
-    api_headers = {
+    headers = {
         **config.HEADERS,
         "Referer": f"https://m.douban.com/movie/subject/{movie_id}/",
     }
 
-    while len(all_reviews) < max_reviews:
+    while start < rank_limit:
+        count = min(page_size, rank_limit - start)
         url = (
             f"https://m.douban.com/rexxar/api/v2/movie/{movie_id}/interests"
-            f"?count={count_per_page}&start={start}&order_by=hot"
+            f"?count={count}&start={start}&order_by={order_by}"
         )
-
-        response = safe_get(url, headers=api_headers)
+        response = safe_get(url, headers=headers)
         if response is None or response.status_code != 200:
-            break
+            return {"records": records, "exhausted": False, "request_failed": True}
 
         try:
             data = response.json()
-        except Exception:
+        except (TypeError, ValueError):
+            return {"records": records, "exhausted": False, "request_failed": True}
+
+        items = data.get("interests") or []
+        if not items:
+            exhausted = True
             break
 
-        interests = data.get("interests", [])
-        if not interests:
-            break  # 没有更多短评了
-
-        for item in interests:
-            # 用户评分: API返回1-5星级，转换为"X星"格式
-            user_rating = item.get("rating", {})
-            if user_rating and user_rating.get("value"):
-                stars = str(int(user_rating["value"])) + "星"
-            else:
-                stars = "未评分"
-
-            # 有用数
-            vote_count = item.get("vote_count", 0)
-
-            review = {
-                "电影名称": movie_title,
-                "用户名称": item.get("user", {}).get("name", ""),
-                "评分": stars,
-                "短评正文": item.get("comment", ""),
-                "有用数": str(vote_count),
-                "评论时间": item.get("create_time", ""),
-            }
-
-            all_reviews.append(review)
-
-            if len(all_reviews) >= max_reviews:
+        captured_at = now_iso()
+        for offset, item in enumerate(items):
+            rank = start + offset + 1
+            if rank > rank_limit:
                 break
+            review_id = str(item.get("id", ""))
+            key = (review_id, sample_label)
+            if review_id and key not in existing_keys:
+                records.append(
+                    transform_review_item(
+                        movie_id,
+                        movie_title,
+                        item,
+                        sample_label,
+                        rank,
+                        captured_at,
+                    )
+                )
+                existing_keys.add(key)
 
-        start += count_per_page
-
-        # 检查是否已经获取了全部可用的
-        total = data.get("total", 0)
-        if start >= total:
+        start += len(items)
+        total = int(data.get("total") or 0)
+        if len(items) < count or (total and start >= total):
+            exhausted = True
             break
 
-    print(f"  《{movie_title}》: 获取 {len(all_reviews)} 条短评")
-    return all_reviews
+        if start < rank_limit:
+            import time
+
+            time.sleep(config.random_delay(config.DETAIL_DELAY_BASE))
+
+    return {"records": records, "exhausted": exhausted, "request_failed": False}
+
+
+def parse_movie_reviews(movie_id: str, movie_title: str, max_reviews: int = 20) -> list[dict]:
+    """兼容旧调用：返回热门排序前 ``max_reviews`` 条。"""
+    result = fetch_review_sample(
+        movie_id,
+        movie_title,
+        sample_label="热门",
+        order_by="hot",
+        rank_limit=max_reviews,
+    )
+    return result["records"]

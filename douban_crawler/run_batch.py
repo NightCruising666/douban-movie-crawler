@@ -1,107 +1,118 @@
-"""
-阶段二批处理
-===========
-每批采集 100 部电影详情，采集完自动停止。
-运行前自动跳过已采集的电影。
+"""阶段二：分批采集电影详情。
 
-用法:
-    python run_batch.py      → 跑一批（100部）
-    python run_batch.py --status → 只看进度不跑
+用法：
+    python run_batch.py
+    python run_batch.py --status
+    python run_batch.py --batch-size 50
 """
 
-import sys, os, time
+from __future__ import annotations
+
+import argparse
+import csv
+import os
+import sys
+import time
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src import config
 from src.parser import parse_movie_detail
 from src.saver import append_to_csv
 
-BATCH_SIZE = 100
-MOVIE_FIELDS = [
-    "电影名称", "导演", "主演", "上映年份", "类型",
-    "国家/地区", "片长", "豆瓣评分", "评价人数", "五星占比",
-    "短评总数", "长评总数"
-]
 
-# ---- 加载阶段一数据 ----
-import csv as csv_module
-raw_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), config.MOVIES_RAW_CSV)
-all_movies = []
-with open(raw_path, "r", encoding=config.CSV_ENCODING) as f:
-    for row in csv_module.DictReader(f):
-        all_movies.append({
-            "title": row["电影名称"], "url": row["URL"],
-            "rate": row["评分"], "id": row["豆瓣ID"],
-        })
+ROOT = os.path.dirname(os.path.abspath(__file__))
 
-target = min(config.TARGET_MOVIES, len(all_movies))
-selected = all_movies[:target]
 
-# ---- 断点：已采集 ----
-collected_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), config.MOVIES_CSV)
-collected = set()
-if os.path.exists(collected_path):
-    with open(collected_path, "r", encoding=config.CSV_ENCODING) as f:
-        for row in csv_module.DictReader(f):
-            n = row.get("电影名称", "").strip()
-            if n:
-                collected.add(n)
+def project_path(relative_path: str) -> str:
+    return os.path.join(ROOT, relative_path)
 
-# --status 模式
-if "--status" in sys.argv:
-    print(f"总目标: {target} 部  |  已采集: {len(collected)} 部  |  待采集: {target - len(collected)} 部")
-    sys.exit(0)
 
-# ---- 跑一个批次 ----
-pending = [m for m in selected if m["title"] not in collected]
-if not pending:
-    print(f"全部完成! {len(collected)}/{target} 部已采集")
-    sys.exit(0)
+def load_raw_movies() -> list[dict]:
+    path = project_path(config.MOVIES_RAW_CSV)
+    with open(path, "r", encoding=config.CSV_ENCODING, newline="") as file:
+        rows = list(csv.DictReader(file))
 
-batch = pending[:BATCH_SIZE]
-print(f"本批: {len(batch)} 部  |  累计: {len(collected)}/{target}")
-print()
+    if config.TARGET_MOVIES is not None:
+        rows = rows[: config.TARGET_MOVIES]
+    return rows
 
-new_count = 0
-fail_count = 0
 
-for i, m in enumerate(batch, 1):
-    # 主动冷却：每 N 部成功就休息
-    if new_count > 0 and new_count % config.COOLDOWN_EVERY_N == 0:
-        print(f"\n  [主动冷却] 已采{new_count}部，休息{config.COOLDOWN_SECONDS}秒...")
-        time.sleep(config.COOLDOWN_SECONDS)
+def load_collected_ids() -> set[str]:
+    path = project_path(config.MOVIES_CSV)
+    if not os.path.exists(path):
+        return set()
 
-    delay = config.random_delay(config.DETAIL_DELAY_BASE)
-    print(f"[{i}/{len(batch)}] ({delay:.1f}s)", end=" ")
-    detail = parse_movie_detail(m["id"])
+    with open(path, "r", encoding=config.CSV_ENCODING, newline="") as file:
+        reader = csv.DictReader(file)
+        if "豆瓣ID" not in (reader.fieldnames or []):
+            raise RuntimeError(
+                "movies.csv 为旧版表头，请先移入 data/archive 后再运行新版采集。"
+            )
+        return {row["豆瓣ID"].strip() for row in reader if row.get("豆瓣ID", "").strip()}
 
-    if detail:
-        append_to_csv([detail], config.MOVIES_CSV, MOVIE_FIELDS)
-        new_count += 1
-        fail_count = 0
-        time.sleep(delay)
-    else:
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="分批采集豆瓣电影详情")
+    parser.add_argument("--status", action="store_true", help="只显示进度")
+    parser.add_argument("--batch-size", type=int, default=config.BATCH_SIZE, help="本次最多采集数")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    all_movies = load_raw_movies()
+    collected = load_collected_ids()
+    pending = [row for row in all_movies if row.get("豆瓣ID", "").strip() not in collected]
+
+    if args.status:
+        print(f"总目标: {len(all_movies)} 部  |  已采集: {len(collected)} 部  |  待采集: {len(pending)} 部")
+        return 0
+
+    if not pending:
+        print(f"全部完成：{len(collected)}/{len(all_movies)} 部")
+        return 0
+
+    batch = pending[: max(1, args.batch_size)]
+    print(f"本批: {len(batch)} 部  |  累计: {len(collected)}/{len(all_movies)}")
+
+    new_count = 0
+    fail_count = 0
+    for index, movie in enumerate(batch, 1):
+        if new_count and new_count % config.COOLDOWN_EVERY_N == 0:
+            print(f"\n  [主动冷却] 已采 {new_count} 部，休息 {config.COOLDOWN_SECONDS} 秒")
+            time.sleep(config.COOLDOWN_SECONDS)
+
+        movie_id = movie.get("豆瓣ID", "").strip()
+        delay = config.random_delay(config.DETAIL_DELAY_BASE)
+        print(f"[{index}/{len(batch)}] ({delay:.1f}s)", end=" ")
+        detail = parse_movie_detail(movie_id)
+
+        if detail:
+            append_to_csv([detail], config.MOVIES_CSV, config.MOVIE_FIELDS)
+            collected.add(movie_id)
+            new_count += 1
+            fail_count = 0
+            time.sleep(delay)
+            continue
+
         fail_count += 1
-        # 单次失败不立即停，给几次重试机会
         if fail_count <= 2:
             pause = config.FAIL_PAUSE_SHORT
-            print(f"  等{pause}s重试...", end=" ")
+            print(f"  等待 {pause} 秒后继续")
             time.sleep(pause)
         elif fail_count <= 5:
             pause = config.FAIL_PAUSE_MEDIUM
-            print(f"\n  ⚠ 连续{fail_count}次失败，等{pause}s...")
+            print(f"  连续失败 {fail_count} 次，等待 {pause} 秒")
             time.sleep(pause)
         else:
-            # 真的被限了
-            print(f"\n\n🛑 连续 {fail_count} 次失败，IP已被限制。")
-            print(f"   本批新增: {new_count} 部  |  累计: {len(collected) + new_count}/{target}")
-            remaining = target - len(collected) - new_count
-            print(f"   剩余: {remaining} 部  |  建议: 切换IP后运行 python run_batch.py")
-            sys.exit(0)
+            print("\n连续失败 6 次，本批停止，保留已写入数据。")
+            break
 
-remaining = target - len(collected) - new_count
-print(f"\n本批完成: 新增 {new_count} 部  |  累计: {len(collected) + new_count}/{target}")
-if remaining > 0:
-    print(f"剩余: {remaining} 部  |  运行 python run_batch.py 继续")
-else:
-    print("全部完成!")
+    remaining = len(all_movies) - len(collected)
+    print(f"\n本批新增: {new_count} 部  |  累计: {len(collected)}/{len(all_movies)}  |  剩余: {remaining} 部")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

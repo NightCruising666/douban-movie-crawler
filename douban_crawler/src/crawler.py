@@ -153,7 +153,7 @@ def fetch_all_movies_for_tag(tag):
         all_subjects.extend(subjects)
         offset += len(subjects)
 
-        time.sleep(config.DELAY_SECONDS)
+        time.sleep(config.random_delay(config.SEARCH_DELAY_BASE))
 
     print(f"  标签 '{tag}' 共计 {len(all_subjects)} 部电影")
     return all_subjects

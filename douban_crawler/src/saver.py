@@ -25,11 +25,28 @@ def ensure_data_dir():
 
 
 def _resolve_path(filename):
-    """处理文件名中的 data/ 前缀，避免 data/data/ 路径重复。"""
+    """解析 data/ 相对路径，并保留 archive/ 等子目录。"""
     data_dir = ensure_data_dir()
-    # 如果 filename 已经包含 "data/" 前缀，去掉它
-    basename = filename.replace("data/", "").replace("data\\", "")
-    return os.path.join(data_dir, basename)
+    normalized = filename.replace("\\", "/")
+    if normalized.startswith("data/"):
+        normalized = normalized[len("data/"):]
+    filepath = os.path.join(data_dir, normalized)
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    return filepath
+
+
+def _validate_existing_header(filepath, fieldnames):
+    """追加前检查现有表头，防止新旧 schema 混写造成 CSV 损坏。"""
+    if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
+        return
+    with open(filepath, "r", newline="", encoding=config.CSV_ENCODING) as file:
+        existing = next(csv.reader(file), [])
+    if list(existing) != list(fieldnames):
+        raise ValueError(
+            f"CSV表头与当前数据契约不一致: {filepath}\n"
+            f"现有: {existing}\n期望: {list(fieldnames)}\n"
+            "请将旧文件移入 data/archive 后重试。"
+        )
 
 
 def save_to_csv(records, filename, fieldnames):
@@ -46,10 +63,12 @@ def save_to_csv(records, filename, fieldnames):
     """
     filepath = _resolve_path(filename)
 
-    with open(filepath, "w", newline="", encoding=config.CSV_ENCODING) as f:
+    temp_path = f"{filepath}.tmp"
+    with open(temp_path, "w", newline="", encoding=config.CSV_ENCODING) as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()   # 写入表头
         writer.writerows(records)  # 批量写入数据
+    os.replace(temp_path, filepath)
 
     print(f"已保存: {filepath}  ({len(records)} 条记录)")
     return filepath
@@ -65,6 +84,7 @@ def append_to_csv(records, filename, fieldnames):
 
     # 判断是否需要写表头
     file_exists = os.path.exists(filepath) and os.path.getsize(filepath) > 0
+    _validate_existing_header(filepath, fieldnames)
 
     with open(filepath, "a", newline="", encoding=config.CSV_ENCODING) as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)

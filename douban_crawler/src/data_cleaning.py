@@ -1,290 +1,156 @@
-"""
-数据清洗模块
-===========
-对豆瓣电影采集数据进行清洗、转换、标准化。
+"""新版电影与短评数据清洗。
 
-清洗流程:
-  1. 加载CSV → DataFrame
-  2. 缺失值检测与处理
-  3. 数据类型转换（字符串→数字）
-  4. 异常值检测（评分超出范围、年份异常等）
-  5. 重复记录检测
-  6. 字段标准化（年份格式统一、类型拆分等）
-  7. 输出清洗报告 + 保存清洗后CSV
-
-知识点:
-  - pandas.read_csv: 加载CSV
-  - df.isnull().sum(): 统计缺失值
-  - df.astype(): 类型转换
-  - df.duplicated(): 重复检测
-  - df.describe(): 描述性统计
+输出：
+  data/processed/movies_cleaned.csv
+  data/processed/reviews_cleaned.csv
+  data/processed/review_metrics.csv
 """
 
-import pandas as pd
-import numpy as np
+from __future__ import annotations
+
+import math
 import os
-import sys
+from datetime import datetime
 
-# 项目根目录
-ROOT = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(ROOT, "data")
+import numpy as np
+import pandas as pd
 
 
-def load_data(csv_path=None):
-    """
-    加载采集的CSV数据。
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
 
-    参数:
-        csv_path: CSV文件路径，默认为 data/movies.csv
 
-    返回:
-        pd.DataFrame
-    """
-    if csv_path is None:
-        csv_path = os.path.join(DATA_DIR, "movies.csv")
-    elif not os.path.isabs(csv_path):
-        csv_path = os.path.join(DATA_DIR, csv_path)
+def load_csv(filename: str) -> pd.DataFrame:
+    path = os.path.join(DATA_DIR, filename)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"缺少数据文件: {path}")
+    return pd.read_csv(path, encoding="utf-8-sig", dtype={"豆瓣ID": "string", "短评ID": "string"})
 
-    print(f"加载数据: {csv_path}")
-    df = pd.read_csv(csv_path, encoding="utf-8-sig")
-    print(f"  行数: {len(df)}, 列数: {len(df.columns)}")
-    print(f"  列名: {list(df.columns)}")
+
+def classify_origin(countries: object) -> str:
+    parts = {part.strip() for part in str(countries).split("/") if part.strip() and part.strip() != "nan"}
+    mainland = "中国大陆" in parts
+    greater_china = bool(parts & {"中国香港", "中国台湾", "中国澳门"})
+    foreign = bool(parts - {"中国大陆", "中国香港", "中国台湾", "中国澳门"})
+    if mainland and foreign:
+        return "合拍"
+    if mainland:
+        return "中国大陆"
+    if greater_china and not foreign:
+        return "港澳台"
+    if foreign:
+        return "进口"
+    return "未知"
+
+
+def clean_movies(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df = df.drop_duplicates(subset=["豆瓣ID"], keep="last")
+
+    for column in ["豆瓣评分", "评价人数", "短评总数", "长评总数", "上映年份"]:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    df.loc[~df["豆瓣评分"].between(0, 10), "豆瓣评分"] = np.nan
+    current_year = datetime.now().year + 1
+    df.loc[~df["上映年份"].between(1888, current_year), "上映年份"] = np.nan
+
+    for column in ["评价人数", "短评总数", "长评总数", "上映年份"]:
+        df[column] = df[column].round().astype("Int64")
+
+    df["片长分钟"] = pd.to_numeric(
+        df["片长"].astype("string").str.extract(r"(\d+)", expand=False), errors="coerce"
+    ).astype("Int64")
+    df["首映日期"] = pd.to_datetime(df["首映日期"], errors="coerce")
+    df["采集时间"] = pd.to_datetime(df["采集时间"], errors="coerce", utc=True)
+    df["产地分类"] = df["国家/地区"].map(classify_origin)
+
+    rating_count = df["评价人数"].astype("Float64")
+    df["短评参与率"] = df["短评总数"].astype("Float64") / rating_count.replace(0, np.nan)
+    df["长评参与率"] = df["长评总数"].astype("Float64") / rating_count.replace(0, np.nan)
+
+    valid = df.dropna(subset=["豆瓣评分", "评价人数"])
+    overall_mean = valid["豆瓣评分"].mean()
+    minimum_votes = valid["评价人数"].median()
+    votes = df["评价人数"].astype("Float64")
+    df["贝叶斯加权评分"] = (
+        votes / (votes + minimum_votes) * df["豆瓣评分"]
+        + minimum_votes / (votes + minimum_votes) * overall_mean
+    )
     return df
 
 
-def inspect_missing(df):
-    """
-    检查缺失值。
-
-    豆瓣API返回的数据可能包含:
-    - 空字符串 ""（某些字段无数据）
-    - NaN（pandas解析时的空值）
-    - "未知" 等占位文本
-
-    返回:
-        dict: 每列的缺失统计
-    """
-    print("\n" + "=" * 50)
-    print("缺失值检查")
-    print("=" * 50)
-
-    report = {}
-    for col in df.columns:
-        # 空字符串 + NaN 都算缺失
-        null_count = df[col].isna().sum()
-        empty_count = (df[col].astype(str).str.strip() == "").sum()
-        total_missing = null_count + empty_count
-
-        report[col] = {
-            "NaN": null_count,
-            "空字符串": empty_count,
-            "缺失合计": total_missing,
-            "缺失比例": f"{total_missing / len(df) * 100:.1f}%"
-        }
-
-        if total_missing > 0:
-            print(f"  ✗ {col}: 缺失 {total_missing} 条 ({total_missing / len(df) * 100:.1f}%)")
-
-    if all(v["缺失合计"] == 0 for v in report.values()):
-        print("  ✓ 无缺失值")
-
-    return report
-
-
-def clean_movies(df):
-    """
-    清洗电影数据。
-
-    处理:
-    - 豆瓣评分 → float
-    - 评价人数 → int
-    - 上映年份 → int
-    - 导演/主演/类型中的空值 → "未知"
-    - 五星占比 → 暂保留（API未返回）
-
-    返回:
-        pd.DataFrame: 清洗后的数据
-    """
-    print("\n" + "=" * 50)
-    print("数据清洗")
-    print("=" * 50)
-
+def clean_reviews(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-
-    # ---- 1. 豆瓣评分 → float ----
-    # 原始格式: "7.7"（字符串）
-    df["豆瓣评分"] = pd.to_numeric(df["豆瓣评分"], errors="coerce")
-    invalid_scores = df[df["豆瓣评分"].isna() & (df["电影名称"].notna())]
-    if len(invalid_scores) > 0:
-        print(f"  ⚠ {len(invalid_scores)} 条评分为无效值，已置为 NaN")
-
-    # 评分范围检查：豆瓣评分 1.0 ~ 10.0
-    out_of_range = df[(df["豆瓣评分"] < 1.0) | (df["豆瓣评分"] > 10.0)]
-    if len(out_of_range) > 0:
-        print(f"  ⚠ {len(out_of_range)} 条评分超出范围(1-10)，标记为异常")
-
-    # ---- 2. 评价人数 → int ----
-    # 原始格式: "15087"（字符串）
-    df["评价人数"] = pd.to_numeric(df["评价人数"], errors="coerce").astype("Int64")
-    # Int64 支持 NaN，普通 int 不支持
-
-    # ---- 3. 上映年份 → int ----
-    df["上映年份"] = pd.to_numeric(df["上映年份"], errors="coerce").astype("Int64")
-    # 年份范围检查：合理范围 1900 ~ 当前
-    current_year = 2026
-    bad_years = df[(df["上映年份"] < 1900) | (df["上映年份"] > current_year)]
-    if len(bad_years) > 0:
-        print(f"  ⚠ {len(bad_years)} 条年份异常（<1900 或 >{current_year}）")
-
-    # ---- 4. 空字符串 → "未知" ----
-    for col in ["导演", "主演", "类型", "国家/地区", "片长"]:
-        empty_mask = df[col].astype(str).str.strip().isin(["", "nan", "NaN", "None"])
-        count = empty_mask.sum()
-        if count > 0:
-            df.loc[empty_mask, col] = "未知"
-            print(f"  {col}: {count} 条空值 → '未知'")
-
-    print(f"  ✓ 清洗完成")
-    return df
-
-
-def clean_reviews(df):
-    """
-    清洗短评数据。
-
-    处理:
-    - 有用数 → int
-    - 评论时间 → datetime
-    - 评分 → 数值（"5星" → 5）
-    - 空短评正文 → 标记
-
-    返回:
-        pd.DataFrame: 清洗后的数据
-    """
-    print("\n清洗短评数据...")
-    df = df.copy()
-
-    # ---- 1. 有用数 → int ----
-    df["有用数"] = pd.to_numeric(df["有用数"], errors="coerce").astype("Int64")
-
-    # ---- 2. 评分 → 数值 ----
-    # "5星" → 5, "未评分" → NaN
-    df["评分值"] = df["评分"].str.extract(r"(\d+)").astype("Int64")
-
-    # ---- 3. 评论时间 → datetime ----
+    df = df.drop_duplicates(subset=["短评ID", "采样方式"], keep="last")
+    df["评分值"] = pd.to_numeric(df["评分"].astype("string").str.extract(r"(\d+)", expand=False), errors="coerce")
+    df.loc[~df["评分值"].between(1, 5), "评分值"] = np.nan
+    df["有用数"] = pd.to_numeric(df["有用数"], errors="coerce").fillna(0).clip(lower=0).astype("Int64")
+    df["排序位置"] = pd.to_numeric(df["排序位置"], errors="coerce").astype("Int64")
     df["评论时间"] = pd.to_datetime(df["评论时间"], errors="coerce")
-
-    # ---- 4. 空短评 ----
-    empty_reviews = (df["短评正文"].astype(str).str.strip() == "").sum()
-    if empty_reviews > 0:
-        print(f"  ⚠ {empty_reviews} 条短评正文为空")
-
-    print(f"  ✓ 短评清洗完成")
+    df["采集时间"] = pd.to_datetime(df["采集时间"], errors="coerce", utc=True)
     return df
 
 
-def detect_duplicates(df, subset=None):
-    """
-    检测重复记录。
-
-    参数:
-        df:     DataFrame
-        subset: 按哪些列判断重复（默认全部列）
-
-    返回:
-        int: 重复行数
-    """
-    print("\n" + "=" * 50)
-    print("重复检测")
-    print("=" * 50)
-
-    if subset:
-        dup_count = df.duplicated(subset=subset, keep="first").sum()
-        print(f"  按 {subset} 检测: {dup_count} 条重复")
-    else:
-        dup_count = df.duplicated(keep="first").sum()
-        print(f"  完全重复: {dup_count} 条")
-
-    if dup_count == 0:
-        print("  ✓ 无重复记录")
-
-    return dup_count
+def wilson_interval(successes: int, total: int, z: float = 1.96) -> tuple[float, float]:
+    if total <= 0:
+        return (math.nan, math.nan)
+    p = successes / total
+    denominator = 1 + z * z / total
+    center = (p + z * z / (2 * total)) / denominator
+    margin = z * math.sqrt(p * (1 - p) / total + z * z / (4 * total * total)) / denominator
+    return (center - margin, center + margin)
 
 
-def summary_statistics(df):
-    """
-    生成描述性统计。
-
-    针对数值列计算: 均值、中位数、标准差、最小/最大值、四分位数。
-    """
-    print("\n" + "=" * 50)
-    print("描述性统计")
-    print("=" * 50)
-
-    numeric_cols = df.select_dtypes(include=["int64", "float64", "Int64"]).columns
-    if len(numeric_cols) > 0:
-        stats = df[numeric_cols].describe()
-        print(stats.to_string())
-        return stats
-    else:
-        print("  无数值列可统计")
-        return None
-
-
-def save_cleaned(df, filename):
-    """
-    保存清洗后的数据。
-
-    参数:
-        df:       DataFrame
-        filename: 输出文件名（如 "movies_cleaned.csv"）
-    """
-    filepath = os.path.join(DATA_DIR, filename)
-    df.to_csv(filepath, index=False, encoding="utf-8-sig")
-    print(f"\n已保存清洗数据: {filepath} ({len(df)} 条)")
-    return filepath
+def review_metrics(reviews: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    grouped = reviews.dropna(subset=["评分值"]).groupby(["豆瓣ID", "电影名称", "采样方式"], dropna=False)
+    for (movie_id, title, sample_type), group in grouped:
+        ratings = group["评分值"].astype(float)
+        useful = group["有用数"].astype(float)
+        raw_weights = useful + 1
+        log_weights = np.log1p(useful) + 1
+        five_stars = int((ratings == 5).sum())
+        low, high = wilson_interval(five_stars, len(ratings))
+        probabilities = ratings.value_counts(normalize=True)
+        entropy = float(-(probabilities * np.log2(probabilities)).sum())
+        rows.append(
+            {
+                "豆瓣ID": movie_id,
+                "电影名称": title,
+                "采样方式": sample_type,
+                "有效评分样本数": len(ratings),
+                "平均星级": ratings.mean(),
+                "原始有用数加权星级": np.average(ratings, weights=raw_weights),
+                "对数有用数加权星级": np.average(ratings, weights=log_weights),
+                "五星样本占比": five_stars / len(ratings),
+                "五星占比95%CI下限": low,
+                "五星占比95%CI上限": high,
+                "星级分布熵": entropy,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
-def run_full_cleaning():
-    """
-    一键运行完整清洗流程。
+def save(df: pd.DataFrame, filename: str) -> str:
+    os.makedirs(PROCESSED_DIR, exist_ok=True)
+    path = os.path.join(PROCESSED_DIR, filename)
+    df.to_csv(path, index=False, encoding="utf-8-sig")
+    print(f"已保存: {path} ({len(df)} 条)")
+    return path
 
-    流程:
-      movies.csv  → 清洗 → movies_cleaned.csv
-      reviews.csv → 清洗 → reviews_cleaned.csv
-    """
-    print("=" * 60)
-    print("  豆瓣电影数据清洗流程")
-    print("=" * 60)
 
-    # ---- 电影数据 ----
-    movies_path = os.path.join(DATA_DIR, "movies.csv")
-    if os.path.exists(movies_path):
-        df_movies = load_data(movies_path)
-        inspect_missing(df_movies)
-        detect_duplicates(df_movies, subset=["电影名称"])
-        df_movies = clean_movies(df_movies)
-        summary_statistics(df_movies)
-        save_cleaned(df_movies, "movies_cleaned.csv")
-    else:
-        print(f"\n⚠ {movies_path} 不存在，跳过电影数据清洗")
+def run_full_cleaning() -> None:
+    movies = clean_movies(load_csv("movies.csv"))
+    save(movies, "movies_cleaned.csv")
 
-    # ---- 短评数据 ----
     reviews_path = os.path.join(DATA_DIR, "reviews.csv")
     if os.path.exists(reviews_path):
-        print("\n" + "-" * 40)
-        df_reviews = load_data(reviews_path)
-        inspect_missing(df_reviews)
-        detect_duplicates(df_reviews)
-        df_reviews = clean_reviews(df_reviews)
-        summary_statistics(df_reviews)
-        save_cleaned(df_reviews, "reviews_cleaned.csv")
+        reviews = clean_reviews(load_csv("reviews.csv"))
+        save(reviews, "reviews_cleaned.csv")
+        save(review_metrics(reviews), "review_metrics.csv")
     else:
-        print(f"\n⚠ {reviews_path} 不存在，跳过短评数据清洗")
-
-    print("\n" + "=" * 60)
-    print("  清洗流程完成！")
-    print("=" * 60)
+        print("尚未找到 reviews.csv，本次只清洗电影表。")
 
 
 if __name__ == "__main__":

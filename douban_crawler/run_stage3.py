@@ -1,137 +1,196 @@
-"""
-阶段三批处理 — 短评采集
-======================
-从 movies.csv 中逐部电影拉取短评（6字段），边爬边存。
+"""阶段三：按采样口径分批采集短评。
 
-用法:
-    python run_stage3.py           → 跑一批（遇拒即停）
-    python run_stage3.py --status  → 看进度
-
-反爬策略同阶段二：随机延迟 + 主动冷却 + 遇拒即停
+默认每部电影采集 15 条热门短评和 15 条时间排序短评。断点以
+``(豆瓣ID, 采样方式)`` 为单位，不会因某部电影已有部分短评就
+误判为整部完成。
 """
 
-import sys, os, time
+from __future__ import annotations
+
+import argparse
+import csv
+import os
+import sys
+import time
+from collections import Counter
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src import config
-from src.parser import parse_movie_reviews
-from src.saver import append_to_csv
+from src.parser import fetch_review_sample, now_iso
+from src.saver import append_to_csv, save_to_csv
 
-REVIEWS_PER_MOVIE = 30      # 每部电影拉多少条短评
-COOLDOWN_EVERY_MOVIES = 3   # 每 N 部电影后主动冷却
-COOLDOWN_SECONDS = 45       # 冷却秒数
-PAUSE_AT_TOTAL = 500        # 达到此总数时暂停（0=不暂停）
 
-REVIEW_FIELDS = [
-    "电影名称", "用户名称", "评分", "短评正文", "有用数", "评论时间"
-]
+ROOT = os.path.dirname(os.path.abspath(__file__))
+FINISHED_STATES = {"完成", "已穷尽"}
 
-# ---- 加载已采集详情的电影 ----
-import csv as csv_module
-movies_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), config.MOVIES_CSV)
-movies_to_review = []
-with open(movies_path, "r", encoding=config.CSV_ENCODING) as f:
-    for row in csv_module.DictReader(f):
-        mid = row.get("电影名称", "").strip()
-        if mid:
-            movies_to_review.append(mid)
 
-# ---- 断点：已有短评的电影 ----
-reviews_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), config.REVIEWS_CSV)
-done_movies = set()
-if os.path.exists(reviews_path):
-    with open(reviews_path, "r", encoding=config.CSV_ENCODING) as f:
-        for row in csv_module.DictReader(f):
-            n = row.get("电影名称", "").strip()
-            if n:
-                done_movies.add(n)
+def project_path(relative_path: str) -> str:
+    return os.path.join(ROOT, relative_path)
 
-# ---- 加载原始电影ID映射 ----
-raw_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), config.MOVIES_RAW_CSV)
-movie_id_map = {}
-with open(raw_path, "r", encoding=config.CSV_ENCODING) as f:
-    for row in csv_module.DictReader(f):
-        movie_id_map[row["电影名称"]] = row["豆瓣ID"]
 
-# --status 模式
-if "--status" in sys.argv:
-    total = len(movies_to_review)
-    done = len(done_movies)
-    remaining = total - done
-    # 估算已有短评数
-    rc = sum(1 for _ in open(reviews_path, "r", encoding=config.CSV_ENCODING)) - 1 if os.path.exists(reviews_path) else 0
-    print(f"电影: {done}/{total} 部已采集短评  |  剩余: {remaining} 部")
-    print(f"短评: ~{rc} 条  →  {config.REVIEWS_CSV}")
-    print(f"每部采集: {REVIEWS_PER_MOVIE} 条短评")
-    sys.exit(0)
+def load_movies() -> list[dict]:
+    path = project_path(config.MOVIES_CSV)
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding=config.CSV_ENCODING, newline="") as file:
+        return list(csv.DictReader(file))
 
-# ---- 跑一批 ----
-pending = [m for m in movies_to_review if m not in done_movies]
-if not pending:
-    print(f"全部完成! {len(done_movies)}/{len(movies_to_review)} 部已采集短评")
-    sys.exit(0)
 
-print(f"待采集: {len(pending)} 部  |  已采集: {len(done_movies)} 部")
-print(f"每部: {REVIEWS_PER_MOVIE} 条短评  |  预计总数据: {len(movies_to_review) * REVIEWS_PER_MOVIE} 条")
-print()
+def load_review_state() -> tuple[set[tuple[str, str]], Counter, dict[tuple[str, str], str]]:
+    existing_keys: set[tuple[str, str]] = set()
+    counts: Counter = Counter()
+    progress_states: dict[tuple[str, str], str] = {}
 
-new_movies = 0
-total_reviews = 0
-fail_count = 0
+    reviews_path = project_path(config.REVIEWS_CSV)
+    if os.path.exists(reviews_path):
+        with open(reviews_path, "r", encoding=config.CSV_ENCODING, newline="") as file:
+            for row in csv.DictReader(file):
+                review_id = row.get("短评ID", "").strip()
+                movie_id = row.get("豆瓣ID", "").strip()
+                label = row.get("采样方式", "").strip()
+                if review_id and movie_id and label:
+                    existing_keys.add((review_id, label))
+                    counts[(movie_id, label)] += 1
 
-for i, title in enumerate(pending, 1):
-    mid = movie_id_map.get(title, "")
-    if not mid:
-        continue
+    progress_path = project_path(config.REVIEW_PROGRESS_CSV)
+    if os.path.exists(progress_path):
+        with open(progress_path, "r", encoding=config.CSV_ENCODING, newline="") as file:
+            for row in csv.DictReader(file):
+                key = (row.get("豆瓣ID", "").strip(), row.get("采样方式", "").strip())
+                if all(key):
+                    progress_states[key] = row.get("状态", "").strip()
 
-    # 主动冷却
-    if new_movies > 0 and new_movies % COOLDOWN_EVERY_MOVIES == 0:
-        print(f"\n  [主动冷却] 已采{new_movies}部，休息{COOLDOWN_SECONDS}秒...")
-        time.sleep(COOLDOWN_SECONDS)
+    return existing_keys, counts, progress_states
 
-    delay = config.random_delay(config.DETAIL_DELAY_BASE)
-    print(f"[{i}/{len(pending)}] 《{title}》({delay:.1f}s)", end=" ")
-    reviews = parse_movie_reviews(mid, title, max_reviews=REVIEWS_PER_MOVIE)
 
-    if reviews:
-        append_to_csv(reviews, config.REVIEWS_CSV, REVIEW_FIELDS)
-        new_movies += 1
-        total_reviews += len(reviews)
-        fail_count = 0
-        time.sleep(delay)
+def is_sample_finished(movie_id: str, plan: dict, counts: Counter, states: dict) -> bool:
+    key = (movie_id, plan["label"])
+    return counts[key] >= plan["limit"] or states.get(key) == "已穷尽"
 
-        # 达到目标总数时自动暂停
-        done_now = len(done_movies) + new_movies
-        if PAUSE_AT_TOTAL > 0 and done_now >= PAUSE_AT_TOTAL:
-            rc = sum(1 for _ in open(reviews_path, "r", encoding=config.CSV_ENCODING)) - 1
-            print(f"\n\n{'='*50}")
-            print(f"  ⏸  已达到目标: {done_now}/{len(movies_to_review)} 部")
-            print(f"  短评: ~{rc} 条  →  {config.REVIEWS_CSV}")
-            print(f"  {'='*50}")
-            print(f"  修改 PAUSE_AT_TOTAL 后运行 python run_stage3.py 继续")
-            sys.exit(0)
-    else:
-        fail_count += 1
-        if fail_count <= 2:
-            print(f"  等10s重试...")
-            time.sleep(10)
-        elif fail_count <= 4:
-            print(f"\n  ⚠ 连续{fail_count}次失败，等60s...")
-            time.sleep(60)
-        else:
-            done = len(done_movies) + new_movies
-            rc = sum(1 for _ in open(reviews_path, "r", encoding=config.CSV_ENCODING)) - 1
-            print(f"\n\n🛑 连续 {fail_count} 次失败，IP被限。")
-            print(f"   本批: +{new_movies}部 / +{total_reviews}条短评")
-            print(f"   累计: {done}部电影 / ~{rc}条短评")
-            print(f"   建议: 切换IP后运行 python run_stage3.py")
-            sys.exit(0)
 
-done = len(done_movies) + new_movies
-rc = sum(1 for _ in open(reviews_path, "r", encoding=config.CSV_ENCODING)) - 1
-print(f"\n本批完成: +{new_movies}部 / +{total_reviews}条短评")
-print(f"累计: {done}/{len(movies_to_review)} 部电影 / ~{rc}条短评")
-if done < len(movies_to_review):
-    print(f"运行 python run_stage3.py 继续")
-else:
-    print("🎉 阶段三全部完成!")
+def is_movie_finished(movie_id: str, counts: Counter, states: dict) -> bool:
+    return all(is_sample_finished(movie_id, plan, counts, states) for plan in config.REVIEW_SAMPLING_PLAN)
+
+
+def save_progress(movies: list[dict], counts: Counter, states: dict) -> None:
+    rows = []
+    updated_at = now_iso()
+    movie_names = {row.get("豆瓣ID", ""): row.get("电影名称", "") for row in movies}
+    for movie_id, title in movie_names.items():
+        for plan in config.REVIEW_SAMPLING_PLAN:
+            key = (movie_id, plan["label"])
+            count = counts[key]
+            if count >= plan["limit"]:
+                status = "完成"
+            else:
+                status = states.get(key, "待采集")
+            rows.append(
+                {
+                    "豆瓣ID": movie_id,
+                    "电影名称": title,
+                    "采样方式": plan["label"],
+                    "目标数": str(plan["limit"]),
+                    "已采集数": str(count),
+                    "状态": status,
+                    "更新时间": updated_at,
+                }
+            )
+    save_to_csv(rows, config.REVIEW_PROGRESS_CSV, config.REVIEW_PROGRESS_FIELDS)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="分层采集豆瓣电影短评")
+    parser.add_argument("--status", action="store_true", help="只显示进度")
+    parser.add_argument("--batch-size", type=int, default=config.BATCH_SIZE, help="本次最多处理的电影数")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    movies = load_movies()
+    if not movies:
+        print("尚未找到新版 movies.csv 或文件为空，请先运行阶段二。")
+        return 0 if args.status else 1
+    existing_keys, counts, states = load_review_state()
+    pending = [
+        movie
+        for movie in movies
+        if not is_movie_finished(movie.get("豆瓣ID", ""), counts, states)
+    ]
+    finished_count = len(movies) - len(pending)
+
+    if args.status:
+        review_rows = sum(counts.values())
+        print(f"电影: {finished_count}/{len(movies)} 部完成全部采样口径")
+        print(f"短评样本: {review_rows} 条  |  剩余电影: {len(pending)} 部")
+        return 0
+
+    if not pending:
+        print(f"阶段三已完成：{finished_count}/{len(movies)} 部")
+        return 0
+
+    batch = pending[: max(1, args.batch_size)]
+    print(f"本批电影: {len(batch)} 部  |  已完成: {finished_count}/{len(movies)}")
+
+    processed = 0
+    consecutive_failures = 0
+    for index, movie in enumerate(batch, 1):
+        movie_id = movie.get("豆瓣ID", "").strip()
+        title = movie.get("电影名称", "").strip()
+        print(f"\n[{index}/{len(batch)}] 《{title}》")
+
+        movie_failed = False
+        for plan in config.REVIEW_SAMPLING_PLAN:
+            key = (movie_id, plan["label"])
+            if is_sample_finished(movie_id, plan, counts, states):
+                continue
+
+            result = fetch_review_sample(
+                movie_id,
+                title,
+                sample_label=plan["label"],
+                order_by=plan["order_by"],
+                rank_limit=plan["limit"],
+                existing_keys=existing_keys,
+            )
+            records = result["records"]
+            if records:
+                append_to_csv(records, config.REVIEWS_CSV, config.REVIEW_FIELDS)
+                counts[key] += len(records)
+
+            if result["request_failed"]:
+                states[key] = "失败"
+                movie_failed = True
+                consecutive_failures += 1
+                print(f"  {plan['label']}: 请求失败")
+                break
+
+            states[key] = "已穷尽" if result["exhausted"] and counts[key] < plan["limit"] else "完成"
+            print(f"  {plan['label']}: {counts[key]}/{plan['limit']} 条，状态={states[key]}")
+            time.sleep(config.random_delay(config.DETAIL_DELAY_BASE))
+
+        save_progress(movies, counts, states)
+
+        if movie_failed:
+            if consecutive_failures >= 3:
+                print("\n连续 3 部电影请求失败，停止本批。")
+                break
+            time.sleep(config.FAIL_PAUSE_SHORT)
+            continue
+
+        consecutive_failures = 0
+        processed += 1
+        if processed % config.COOLDOWN_EVERY_N == 0:
+            print(f"  [主动冷却] 休息 {config.COOLDOWN_SECONDS} 秒")
+            time.sleep(config.COOLDOWN_SECONDS)
+
+    finished_after = sum(
+        is_movie_finished(movie.get("豆瓣ID", ""), counts, states) for movie in movies
+    )
+    print(f"\n本批处理: {processed} 部  |  总进度: {finished_after}/{len(movies)} 部")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
