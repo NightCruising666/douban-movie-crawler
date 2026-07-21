@@ -24,13 +24,13 @@ def _as_int(value: object) -> int:
         return 0
 
 
-def _write_records(path: Path, records: list[dict]) -> None:
+def _write_records(path: Path, records: list[dict], fieldnames: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
     with temp.open("w", encoding=config.CSV_ENCODING, newline="") as file:
         writer = csv.DictWriter(
             file,
-            fieldnames=config.DETAIL_FAILURE_FIELDS,
+            fieldnames=fieldnames,
             extrasaction="ignore",
             lineterminator="\n",
         )
@@ -53,9 +53,50 @@ def load_failure_records() -> dict[str, dict]:
 
 def _save_states(states: dict[str, dict]) -> None:
     records = list(states.values())
-    _write_records(_path(config.DETAIL_FAILURES_CSV), records)
+    _write_records(_path(config.DETAIL_FAILURES_CSV), records, config.DETAIL_FAILURE_FIELDS)
     unavailable = [record for record in records if record.get("状态") == "不可用"]
-    _write_records(_path(config.UNAVAILABLE_MOVIES_CSV), unavailable)
+    _write_records(
+        _path(config.UNAVAILABLE_MOVIES_CSV),
+        unavailable,
+        config.DETAIL_FAILURE_FIELDS,
+    )
+
+
+def load_failure_attempts() -> list[dict]:
+    path = _path(config.DETAIL_FAILURE_ATTEMPTS_CSV)
+    if not path.exists():
+        return []
+    with path.open("r", encoding=config.CSV_ENCODING, newline="") as file:
+        return list(csv.DictReader(file))
+
+
+def record_failure_attempts(
+    movie_id: str,
+    title: str,
+    round_number: int,
+    attempts: list[dict],
+) -> None:
+    """逐次保存电影级失败请求；按电影、轮次和序号幂等去重。"""
+    records = load_failure_attempts()
+    keyed = {
+        (row.get("豆瓣ID", ""), row.get("轮次", ""), row.get("轮内尝试序号", "")): row
+        for row in records
+    }
+    for index, attempt in enumerate(attempts, 1):
+        row = {
+            "豆瓣ID": movie_id,
+            "电影名称": title,
+            "轮次": str(round_number),
+            "轮内尝试序号": str(index),
+            "失败原因": attempt.get("失败原因", ""),
+            "失败时间": attempt.get("失败时间", ""),
+        }
+        keyed[(movie_id, str(round_number), str(index))] = row
+    _write_records(
+        _path(config.DETAIL_FAILURE_ATTEMPTS_CSV),
+        list(keyed.values()),
+        config.DETAIL_FAILURE_ATTEMPT_FIELDS,
+    )
 
 
 def is_permanent_reason(reason: str) -> bool:

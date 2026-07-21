@@ -57,6 +57,19 @@ class DetailStateTests(unittest.TestCase):
         detail_state.record_failure("4", "电影", "HTTP 400", 3, "2026-01-01T00:00:00+08:00")
         self.assertEqual(detail_state.next_round_number(), 4)
 
+    def test_failure_attempts_are_audited_and_idempotent(self):
+        attempts = [
+            {"失败原因": "HTTP 400", "失败时间": "2026-01-01T00:00:00+08:00"},
+            {"失败原因": "HTTP 400", "失败时间": "2026-01-01T00:15:00+08:00"},
+        ]
+        detail_state.record_failure_attempts("6", "电影", 1, attempts)
+        detail_state.record_failure_attempts("6", "电影", 1, attempts)
+
+        records = detail_state.load_failure_attempts()
+        self.assertEqual(len(records), 2)
+        self.assertEqual([row["轮内尝试序号"] for row in records], ["1", "2"])
+        self.assertEqual(records[1]["失败时间"], "2026-01-01T00:15:00+08:00")
+
 
 if __name__ == "__main__":
     unittest.main()

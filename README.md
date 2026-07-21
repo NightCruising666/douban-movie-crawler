@@ -101,6 +101,7 @@ python douban_crawler/main.py --stage1 --rebuild
 | `movie_tags.csv` | `豆瓣ID + 标签` | 保留样本来源与标签内排名 |
 | `movies.csv` | `豆瓣ID` | 电影详情 |
 | `detail_failures.csv` | `豆瓣ID` | 阶段二失败轮次、原因与恢复状态 |
+| `detail_failure_attempts.csv` | `豆瓣ID + 轮次 + 尝试序号` | 每次电影级失败请求的审计记录 |
 | `unavailable_movies.csv` | `豆瓣ID` | 连续两轮永久 HTTP 失败的不可用条目 |
 | `reviews.csv` | `短评ID + 采样方式` | 不含用户标识的短评样本 |
 | `review_progress.csv` | `豆瓣ID + 采样方式` | 阶段三断点与穷尽状态 |
@@ -154,6 +155,7 @@ douban_crawler/
     ├── movie_tags.csv          # 重建阶段一后生成
     ├── movies.csv              # 阶段二生成
     ├── detail_failures.csv     # 阶段二失败状态与轮次
+    ├── detail_failure_attempts.csv # 逐次失败原因与时间
     ├── unavailable_movies.csv  # 两轮确认不可用的电影
     ├── reviews.csv             # 阶段三生成
     ├── review_progress.csv

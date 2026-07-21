@@ -12,12 +12,12 @@ class RunBatchTests(unittest.TestCase):
         expected = {"豆瓣ID": "1"}
         parse_detail.side_effect = [(None, "HTTP 400"), (expected, "")]
 
-        actual, reason = run_batch.fetch_detail_with_cooldown(
+        actual, attempts = run_batch.fetch_detail_with_cooldown(
             "1", failure_retries=1, failure_cooldown_base=900
         )
 
         self.assertEqual(actual, expected)
-        self.assertEqual(reason, "")
+        self.assertEqual([row["失败原因"] for row in attempts], ["HTTP 400"])
         self.assertEqual(parse_detail.call_count, 2)
         random_delay.assert_called_once_with(900)
         sleep.assert_called_once_with(123.0)
@@ -27,12 +27,12 @@ class RunBatchTests(unittest.TestCase):
         run_batch, "parse_movie_detail_with_reason", return_value=(None, "网络请求失败")
     )
     def test_zero_retries_returns_without_sleeping(self, parse_detail, sleep):
-        actual, reason = run_batch.fetch_detail_with_cooldown(
+        actual, attempts = run_batch.fetch_detail_with_cooldown(
             "1", failure_retries=0, failure_cooldown_base=900
         )
 
         self.assertIsNone(actual)
-        self.assertEqual(reason, "网络请求失败")
+        self.assertEqual([row["失败原因"] for row in attempts], ["网络请求失败"])
         parse_detail.assert_called_once_with("1")
         sleep.assert_not_called()
 
@@ -45,6 +45,10 @@ class RunBatchTests(unittest.TestCase):
     def test_continuous_flag_is_accepted(self):
         args = run_batch.parse_args(["--never-stop-on-failure"])
         self.assertTrue(args.never_stop_on_failure)
+
+    def test_round_number_defaults_to_persistent_auto_assignment(self):
+        args = run_batch.parse_args([])
+        self.assertIsNone(args.round_number)
 
 
 if __name__ == "__main__":

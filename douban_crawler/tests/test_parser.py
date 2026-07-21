@@ -1,13 +1,15 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 from src import config
-from src.parser import transform_movie_detail, transform_review_item
+from src import parser
+from src.parser import parse_movie_detail_with_reason, transform_movie_detail, transform_review_item
 
 
 class ParserTests(unittest.TestCase):
@@ -54,6 +56,17 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(record["短评ID"], "review-1")
         self.assertNotIn("用户名称", record)
         self.assertNotIn("用户匿名标识", record)
+
+    @mock.patch.object(parser, "safe_get")
+    def test_non_object_json_is_temporary_parse_failure(self, safe_get):
+        response = mock.Mock(status_code=200)
+        response.json.return_value = []
+        safe_get.return_value = response
+
+        record, reason = parse_movie_detail_with_reason("1")
+
+        self.assertIsNone(record)
+        self.assertEqual(reason, "JSON解析失败")
 
 
 if __name__ == "__main__":

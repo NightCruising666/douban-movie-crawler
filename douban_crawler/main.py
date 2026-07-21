@@ -62,6 +62,7 @@ def archive_pipeline_files() -> None:
         config.REVIEWS_CSV,
         config.REVIEW_PROGRESS_CSV,
         config.DETAIL_FAILURES_CSV,
+        config.DETAIL_FAILURE_ATTEMPTS_CSV,
         config.UNAVAILABLE_MOVIES_CSV,
         "data/.checkpoint_stage1_tags",
     ):

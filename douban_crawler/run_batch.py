@@ -109,7 +109,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="失败只冷却和跳过，不因连续失败退出；供持续监督模式使用",
     )
-    parser.add_argument("--round-number", type=int, default=1, help="持续监督轮次编号")
+    parser.add_argument(
+        "--round-number",
+        type=int,
+        default=None,
+        help="采集轮次；不传时从失败状态CSV自动分配下一轮",
+    )
     return parser.parse_args(argv)
 
 
@@ -118,12 +123,14 @@ def fetch_detail_with_cooldown(
     *,
     failure_retries: int,
     failure_cooldown_base: float,
-) -> tuple[dict | None, str]:
+) -> tuple[dict | None, list[dict]]:
     """请求详情；失败时长冷却后有限重试，避免连续冲击接口。"""
+    failed_attempts: list[dict] = []
     for attempt in range(failure_retries + 1):
         detail, reason = parse_movie_detail_with_reason(movie_id)
         if detail is not None:
-            return detail, ""
+            return detail, failed_attempts
+        failed_attempts.append({"失败原因": reason, "失败时间": now_iso()})
         if attempt < failure_retries:
             pause = config.random_delay(failure_cooldown_base)
             print(
@@ -131,7 +138,7 @@ def fetch_detail_with_cooldown(
                 f"进行第 {attempt + 1}/{failure_retries} 次重试"
             )
             time.sleep(pause)
-    return None, reason
+    return None, failed_attempts
 
 
 def should_stop_after_failures(
@@ -158,10 +165,11 @@ def main(argv: list[str] | None = None) -> int:
         or args.failure_retries < 0
         or args.max_consecutive_failures <= 0
         or args.minimum_runtime_hours < 0
-        or args.round_number <= 0
+        or (args.round_number is not None and args.round_number <= 0)
     ):
         raise SystemExit("批量数、冷却间隔和失败上限必须大于0，等待秒数与重试数不能小于0。")
     all_movies = load_raw_movies()
+    round_number = args.round_number or detail_state.next_round_number()
     collected = load_collected_ids()
     unavailable = load_unavailable_ids()
     completed = collected | unavailable
@@ -195,11 +203,18 @@ def main(argv: list[str] | None = None) -> int:
         movie_id = movie.get("豆瓣ID", "").strip()
         delay = config.random_delay(args.delay_base)
         print(f"[{index}/{len(batch)}] ({delay:.1f}s)", end=" ")
-        detail, failure_reason = fetch_detail_with_cooldown(
+        detail, failed_attempts = fetch_detail_with_cooldown(
             movie_id,
             failure_retries=args.failure_retries,
             failure_cooldown_base=args.failure_cooldown_base,
         )
+        if failed_attempts:
+            detail_state.record_failure_attempts(
+                movie_id,
+                movie.get("电影名称", ""),
+                round_number,
+                failed_attempts,
+            )
 
         if detail:
             append_to_csv([detail], config.MOVIES_CSV, config.MOVIE_FIELDS)
@@ -214,8 +229,8 @@ def main(argv: list[str] | None = None) -> int:
         failure_state = detail_state.record_failure(
             movie_id,
             movie.get("电影名称", ""),
-            failure_reason,
-            args.round_number,
+            failed_attempts[-1]["失败原因"],
+            round_number,
             now_iso(),
         )
         if failure_state["状态"] == "不可用":

@@ -80,8 +80,11 @@ def parse_movie_detail_with_reason(movie_id: str) -> tuple[dict | None, str]:
         return None, f"HTTP {response.status_code}"
 
     try:
-        record = transform_movie_detail(movie_id, response.json())
-    except (TypeError, ValueError):
+        data = response.json()
+        if not isinstance(data, dict):
+            raise TypeError("详情接口JSON顶层不是对象")
+        record = transform_movie_detail(movie_id, data)
+    except (AttributeError, TypeError, ValueError):
         print("✗ JSON解析失败")
         return None, "JSON解析失败"
 
