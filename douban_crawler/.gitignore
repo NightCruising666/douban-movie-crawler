@@ -1,5 +1,6 @@
 # 断点文件（运行时生成，不入仓库）
 data/.checkpoint_*
+!data/.checkpoint_stage1_tags
 
 # 清洗和分析的可再生中间产物
 data/processed/

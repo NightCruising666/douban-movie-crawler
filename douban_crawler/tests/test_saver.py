@@ -36,6 +36,10 @@ class SaverTests(unittest.TestCase):
                     rows = list(csv.reader(file))
                 self.assertEqual(rows, [fields, ["1", "A"], ["2", "B"]])
 
+                with open(os.path.join(directory, "movies.csv"), "rb") as raw_file:
+                    raw = raw_file.read()
+                self.assertNotIn(b"\r\n", raw)
+
 
 if __name__ == "__main__":
     unittest.main()

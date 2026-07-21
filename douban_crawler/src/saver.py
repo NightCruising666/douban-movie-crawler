@@ -65,7 +65,7 @@ def save_to_csv(records, filename, fieldnames):
 
     temp_path = f"{filepath}.tmp"
     with open(temp_path, "w", newline="", encoding=config.CSV_ENCODING) as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()   # 写入表头
         writer.writerows(records)  # 批量写入数据
     os.replace(temp_path, filepath)
@@ -87,7 +87,7 @@ def append_to_csv(records, filename, fieldnames):
     _validate_existing_header(filepath, fieldnames)
 
     with open(filepath, "a", newline="", encoding=config.CSV_ENCODING) as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, lineterminator="\n")
         if not file_exists:
             writer.writeheader()
         writer.writerows(records)
@@ -118,7 +118,7 @@ def deduplicate_movies(input_csv, output_csv, key_field="电影名称"):
                 unique.append(row)
 
     with open(output_path, "w", newline="", encoding=config.CSV_ENCODING) as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         writer.writerows(unique)
 
