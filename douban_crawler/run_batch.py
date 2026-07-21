@@ -93,6 +93,12 @@ def parse_args() -> argparse.Namespace:
         default=config.MAX_CONSECUTIVE_FAILURES,
         help="连续多少部电影在冷却重试后仍失败才停止",
     )
+    parser.add_argument(
+        "--minimum-runtime-hours",
+        type=float,
+        default=config.MINIMUM_RUNTIME_HOURS,
+        help="运行未满该时长时，连续失败只触发冷却而不停止",
+    )
     return parser.parse_args()
 
 
@@ -117,6 +123,19 @@ def fetch_detail_with_cooldown(
     return None
 
 
+def should_stop_after_failures(
+    consecutive_failures: int,
+    failure_limit: int,
+    elapsed_seconds: float,
+    minimum_runtime_hours: float,
+) -> bool:
+    """只有超过保护运行时长且达到连续失败上限时才停止。"""
+    return (
+        consecutive_failures >= failure_limit
+        and elapsed_seconds >= minimum_runtime_hours * 3600
+    )
+
+
 def main() -> int:
     args = parse_args()
     if (
@@ -127,6 +146,7 @@ def main() -> int:
         or args.failure_cooldown_base < 0
         or args.failure_retries < 0
         or args.max_consecutive_failures <= 0
+        or args.minimum_runtime_hours < 0
     ):
         raise SystemExit("批量数、冷却间隔和失败上限必须大于0，等待秒数与重试数不能小于0。")
     all_movies = load_raw_movies()
@@ -146,6 +166,7 @@ def main() -> int:
 
     new_count = 0
     consecutive_failed_movies = 0
+    run_started_at = time.monotonic()
     for index, movie in enumerate(batch, 1):
         if new_count and new_count % args.cooldown_every == 0:
             print(f"\n  [主动冷却] 已采 {new_count} 部，休息 {args.cooldown_seconds:g} 秒")
@@ -173,9 +194,23 @@ def main() -> int:
             f"  该电影冷却重试后仍失败，暂时跳过；"
             f"连续失败电影 {consecutive_failed_movies}/{args.max_consecutive_failures}"
         )
-        if consecutive_failed_movies >= args.max_consecutive_failures:
+        elapsed_seconds = time.monotonic() - run_started_at
+        if should_stop_after_failures(
+            consecutive_failed_movies,
+            args.max_consecutive_failures,
+            elapsed_seconds,
+            args.minimum_runtime_hours,
+        ):
             print("\n连续失败达到上限，本批停止，未成功电影会在下次运行补采。")
             break
+
+        if consecutive_failed_movies >= args.max_consecutive_failures:
+            remaining_hours = max(0.0, args.minimum_runtime_hours - elapsed_seconds / 3600)
+            print(
+                f"  尚在 {args.minimum_runtime_hours:g} 小时保护窗口内"
+                f"（剩余约 {remaining_hours:.1f} 小时），冷却后继续"
+            )
+            consecutive_failed_movies = 0
 
         pause = config.random_delay(args.failure_cooldown_base)
         print(f"  继续下一部前再冷却 {pause / 60:.1f} 分钟")

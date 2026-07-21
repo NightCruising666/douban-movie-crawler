@@ -48,7 +48,7 @@ pip install -r douban_crawler/requirements.txt
 | 数据 | 数量 | 状态 |
 |---|---:|---|
 | 新版候选电影池 `movies_raw.csv` | 2601 部 | 阶段一已完成，19 个标签 |
-| 新版电影详情 `movies.csv` | 56 部 | 新版 15 字段，按豆瓣ID断点续采 |
+| 新版电影详情 `movies.csv` | 66 部 | 新版 15 字段，按豆瓣ID断点续采 |
 | 旧电影详情 | 499 部完整旧表 + 135 部部分新表 | 已归档，不计入新版断点 |
 | 旧短评 | 9980 条正式数据 + 200 条试采 | 已删除用户标识并归档 |
 
@@ -69,7 +69,7 @@ python douban_crawler/run_stage3.py --status
 python douban_crawler/run_batch.py --batch-size 50
 
 # 阶段二低速长批次：间隔约8.4—15.6秒，每10部冷却60秒
-python douban_crawler/run_batch.py --batch-size 2601 --delay-base 12 --cooldown-every 10 --cooldown-seconds 60
+python douban_crawler/run_batch.py --batch-size 2601 --delay-base 12 --cooldown-every 10 --cooldown-seconds 60 --minimum-runtime-hours 3
 
 # 阶段三：默认最多处理100部
 python douban_crawler/run_stage3.py --batch-size 50
@@ -110,7 +110,7 @@ python douban_crawler/main.py --stage1 --rebuild
 4. 短评星级计算的是“样本五星占比”，不是豆瓣全体评分用户的真实五星比例。
 5. 有用数加权反映社区对评论的认可，不能单独用来证明刷分或控评。
 6. 热门排序会放大高互动评论，样本不能代表全部短评；报告必须同时使用电影总体评分和评价人数，短评仅作辅助验证。
-7. 阶段二遇到失败会随机冷却约 10.5—19.5 分钟并重试一次；仍失败则暂时跳过。连续 3 部电影冷却重试后仍失败才停止，未成功电影会在下次运行补采。
+7. 阶段二遇到失败会随机冷却约 10.5—19.5 分钟并重试一次；仍失败则暂时跳过。启动后的前 3 小时处于保护窗口，连续失败只会触发冷却而不会结束；超过 3 小时后，连续 3 部电影冷却重试仍失败才停止。
 
 ## 6. 清洗与分析
 

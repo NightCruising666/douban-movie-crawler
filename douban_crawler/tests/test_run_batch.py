@@ -32,6 +32,12 @@ class RunBatchTests(unittest.TestCase):
         parse_detail.assert_called_once_with("1")
         sleep.assert_not_called()
 
+    def test_failure_limit_does_not_stop_inside_protection_window(self):
+        self.assertFalse(run_batch.should_stop_after_failures(3, 3, 2.9 * 3600, 3))
+
+    def test_failure_limit_stops_after_protection_window(self):
+        self.assertTrue(run_batch.should_stop_after_failures(3, 3, 3 * 3600, 3))
+
 
 if __name__ == "__main__":
     unittest.main()
