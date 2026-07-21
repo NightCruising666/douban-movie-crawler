@@ -7,7 +7,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 from src import config
-from src.parser import anonymize_user, transform_movie_detail, transform_review_item
+from src.parser import transform_movie_detail, transform_review_item
 
 
 class ParserTests(unittest.TestCase):
@@ -32,7 +32,13 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(record["首映日期"], "2020-01-02")
         self.assertEqual(record["短评总数"], "456")
 
-    def test_review_is_anonymized_and_has_composite_key_fields(self):
+    def test_pubdate_list_is_normalized(self):
+        record = transform_movie_detail(
+            "123", {"title": "A", "pubdate": ["2026(中国大陆)"]}, "2026-01-01T00:00:00+08:00"
+        )
+        self.assertEqual(record["首映日期"], "2026")
+
+    def test_review_omits_user_identity_and_has_composite_key_fields(self):
         item = {
             "id": "review-1",
             "user": {"name": "public-name"},
@@ -46,12 +52,8 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(list(record), config.REVIEW_FIELDS)
         self.assertEqual(record["短评ID"], "review-1")
-        self.assertNotEqual(record["用户匿名标识"], "public-name")
-        self.assertEqual(len(record["用户匿名标识"]), 16)
-
-    def test_anonymization_is_stable(self):
-        user = {"id": "u-1", "name": "name"}
-        self.assertEqual(anonymize_user(user), anonymize_user(user))
+        self.assertNotIn("用户名称", record)
+        self.assertNotIn("用户匿名标识", record)
 
 
 if __name__ == "__main__":

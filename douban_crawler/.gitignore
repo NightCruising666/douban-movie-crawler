@@ -3,6 +3,7 @@ data/.checkpoint_*
 
 # 清洗和分析的可再生中间产物
 data/processed/
+data/analysis/
 
 # Python
 __pycache__/

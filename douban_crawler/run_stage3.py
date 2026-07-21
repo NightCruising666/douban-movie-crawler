@@ -1,6 +1,6 @@
 """阶段三：按采样口径分批采集短评。
 
-默认每部电影采集 15 条热门短评和 15 条时间排序短评。断点以
+默认每部电影采集热门排序前 30 条短评。断点以
 ``(豆瓣ID, 采样方式)`` 为单位，不会因某部电影已有部分短评就
 误判为整部完成。
 """
@@ -134,7 +134,6 @@ def main() -> int:
     print(f"本批电影: {len(batch)} 部  |  已完成: {finished_count}/{len(movies)}")
 
     processed = 0
-    consecutive_failures = 0
     for index, movie in enumerate(batch, 1):
         movie_id = movie.get("豆瓣ID", "").strip()
         title = movie.get("电影名称", "").strip()
@@ -162,7 +161,6 @@ def main() -> int:
             if result["request_failed"]:
                 states[key] = "失败"
                 movie_failed = True
-                consecutive_failures += 1
                 print(f"  {plan['label']}: 请求失败")
                 break
 
@@ -173,13 +171,9 @@ def main() -> int:
         save_progress(movies, counts, states)
 
         if movie_failed:
-            if consecutive_failures >= 3:
-                print("\n连续 3 部电影请求失败，停止本批。")
-                break
-            time.sleep(config.FAIL_PAUSE_SHORT)
-            continue
+            print("\n检测到一次请求失败，本批立即停止，已写入短评和进度可从断点续采。")
+            break
 
-        consecutive_failures = 0
         processed += 1
         if processed % config.COOLDOWN_EVERY_N == 0:
             print(f"  [主动冷却] 休息 {config.COOLDOWN_SECONDS} 秒")

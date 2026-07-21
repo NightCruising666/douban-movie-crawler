@@ -14,7 +14,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src import config
-from src.crawler import extract_movie_id, fetch_all_movies_for_tag
+from src.crawler import extract_movie_id, fetch_all_movies_for_tag_with_status
 from src.parser import now_iso
 from src.saver import append_to_csv
 
@@ -51,20 +51,27 @@ def load_csv(path: str) -> list[dict]:
         return list(csv.DictReader(file))
 
 
-def archive_stage1_files() -> None:
+def archive_pipeline_files() -> None:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    archive_dir = project_path(f"data/archive/stage1_rebuild_{stamp}")
+    archive_dir = project_path(f"data/archive/pipeline_rebuild_{stamp}")
     os.makedirs(archive_dir, exist_ok=True)
-    for relative_path in (config.MOVIES_RAW_CSV, config.MOVIE_TAGS_CSV, "data/.checkpoint_stage1_tags"):
+    for relative_path in (
+        config.MOVIES_RAW_CSV,
+        config.MOVIE_TAGS_CSV,
+        config.MOVIES_CSV,
+        config.REVIEWS_CSV,
+        config.REVIEW_PROGRESS_CSV,
+        "data/.checkpoint_stage1_tags",
+    ):
         source = project_path(relative_path)
         if os.path.exists(source):
             os.replace(source, os.path.join(archive_dir, os.path.basename(source)))
-    print(f"旧阶段一数据已移至: {archive_dir}")
+    print(f"旧版全流程数据已移至: {archive_dir}")
 
 
 def run_stage1(rebuild: bool = False) -> None:
     if rebuild:
-        archive_stage1_files()
+        archive_pipeline_files()
 
     raw_rows = load_csv(project_path(config.MOVIES_RAW_CSV))
     tag_rows = load_csv(project_path(config.MOVIE_TAGS_CSV))
@@ -81,7 +88,7 @@ def run_stage1(rebuild: bool = False) -> None:
 
     print(f"阶段一：待采集 {len(pending_tags)} 个标签")
     for tag in pending_tags:
-        subjects = fetch_all_movies_for_tag(tag)
+        subjects, complete = fetch_all_movies_for_tag_with_status(tag)
         captured_at = now_iso()
         new_movies = 0
         new_links = 0
@@ -124,8 +131,13 @@ def run_stage1(rebuild: bool = False) -> None:
                 seen_tag_keys.add(tag_key)
                 new_links += 1
 
-        mark_tag_done(tag)
-        print(f"  {tag}: 新电影 {new_movies} 部，新标签关联 {new_links} 条")
+        if complete:
+            mark_tag_done(tag)
+            print(f"  {tag}: 新电影 {new_movies} 部，新标签关联 {new_links} 条，已写断点")
+        else:
+            print(f"  {tag}: 本次仅取得部分分页，未写断点，下次将重试")
+            print("检测到请求失败，为保护当前访问状态，阶段一立即停止。")
+            break
 
     print(f"阶段一完成：{len(seen_movie_ids)} 部独立电影")
 

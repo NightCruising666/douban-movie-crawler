@@ -21,10 +21,14 @@
 movies_raw.csv + movie_tags.csv
   ↓ 详情 API，按ID断点续传
 movies.csv（15个原始字段）
-  ↓ 每部电影分层采样
-reviews.csv（15条热门 + 15条时间排序）
+  ↓ 每部电影定额采样
+reviews.csv（前30条热门短评）
   ↓ 清洗与派生指标
 data/processed/*.csv
+  ↓
+run_analysis.py
+  ↓
+data/analysis/*.csv + *.png
   ↓
 统计分析、可视化、实验报告和PPT
 ```
@@ -38,6 +42,17 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r douban_crawler/requirements.txt
 ```
+
+当前仓库数据状态：
+
+| 数据 | 数量 | 状态 |
+|---|---:|---|
+| 新版候选电影池 `movies_raw.csv` | 2478 部 | 正式阶段一输入 |
+| 新版电影详情 `movies.csv` | 0 部 | 需按新版 15 字段重新采集 |
+| 旧电影详情 | 499 部完整旧表 + 135 部部分新表 | 已归档，不计入新版断点 |
+| 旧短评 | 9980 条正式数据 + 200 条试采 | 已删除用户标识并归档 |
+
+旧表缺少稳定的豆瓣 ID 或与新版字段不一致，因此保留作采集过程证据，但不会与新版正式表直接拼接。
 
 查看进度：
 
@@ -57,13 +72,20 @@ python douban_crawler/run_batch.py --batch-size 50
 python douban_crawler/run_stage3.py --batch-size 50
 ```
 
+清洗与分析：
+
+```bash
+python douban_crawler/src/data_cleaning.py
+python douban_crawler/run_analysis.py
+```
+
 重建阶段一的标签来源与排名：
 
 ```bash
 python douban_crawler/main.py --stage1 --rebuild
 ```
 
-`--rebuild` 会先将现有阶段一文件移入 `data/archive/stage1_rebuild_时间/`，不会直接删除。
+`--rebuild` 会将当前阶段一至阶段三文件一起移入 `data/archive/pipeline_rebuild_时间/`，避免新电影池与旧详情、旧短评混用，也不会直接删除数据。
 
 ## 4. 当前数据契约
 
@@ -72,7 +94,7 @@ python douban_crawler/main.py --stage1 --rebuild
 | `movies_raw.csv` | `豆瓣ID` | 独立电影候选池 |
 | `movie_tags.csv` | `豆瓣ID + 标签` | 保留样本来源与标签内排名 |
 | `movies.csv` | `豆瓣ID` | 电影详情 |
-| `reviews.csv` | `短评ID + 采样方式` | 匿名化短评样本 |
+| `reviews.csv` | `短评ID + 采样方式` | 不含用户标识的短评样本 |
 | `review_progress.csv` | `豆瓣ID + 采样方式` | 阶段三断点与穷尽状态 |
 
 详细字段见 [docs/DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md)。
@@ -81,9 +103,11 @@ python douban_crawler/main.py --stage1 --rebuild
 
 1. 阶段一是当前豆瓣标签搜索结果，不是历年全部上映电影的随机样本。
 2. 子课题 B 因此描述“豆瓣样本的类型结构变化”，不直接外推到完整市场。
-3. 短评分为热门和时间排序两层；如 `time` 参数未生效，应通过两层短评 ID 重复率判断并在报告中说明。
+3. 每部电影采集热门排序前 30 条短评。2026-07-21 小规模验证中，`time`、`new_score`、`newest` 与 `hot` 的前 15 条均重合 14 条，`latest` 返回空，因此不把这些参数伪装成独立的“近期层”。
 4. 短评星级计算的是“样本五星占比”，不是豆瓣全体评分用户的真实五星比例。
 5. 有用数加权反映社区对评论的认可，不能单独用来证明刷分或控评。
+6. 热门排序会放大高互动评论，样本不能代表全部短评；报告必须同时使用电影总体评分和评价人数，短评仅作辅助验证。
+7. 任一阶段遇到一次请求拒绝或失败就停止当前运行，已写入的记录和断点保留；更换网络或等待后可从断点继续。
 
 ## 6. 清洗与分析
 
@@ -99,6 +123,8 @@ python douban_crawler/src/data_cleaning.py
 
 完整统计设计见 [docs/ANALYSIS_PLAN.md](docs/ANALYSIS_PLAN.md)。
 
+分析脚本会在 `data/analysis/` 生成描述统计、年度类型占比、产地比较、四象限分类等 CSV，以及对应 PNG 图。该目录可由原始数据重复生成，因此默认不提交。
+
 ## 7. 目录结构
 
 ```text
@@ -106,6 +132,7 @@ douban_crawler/
 ├── main.py
 ├── run_batch.py
 ├── run_stage3.py
+├── run_analysis.py
 ├── src/
 │   ├── config.py
 │   ├── crawler.py
@@ -119,12 +146,13 @@ douban_crawler/
     ├── reviews.csv             # 阶段三生成
     ├── review_progress.csv
     ├── processed/              # 可再生清洗产物，默认不入库
+    ├── analysis/               # 可再生统计表和图，默认不入库
     └── archive/                # 旧版数据，不参与新流程
 ```
 
 ## 8. 合规与隐私
 
 - 只采集研究所需的公开字段，控制请求频率。
-- 新版短评表不保存公开用户名，只保存不可逆摘要。
+- 新版短评表不保存用户名、用户 ID、头像地址或其摘要。
 - 不提供验证码规避、账号凭证或代理 IP 自动轮换功能。
 - 仓库不应包含 API Key、Cookie、Token、学号或其他个人资料。

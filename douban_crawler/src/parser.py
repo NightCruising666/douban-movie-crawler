@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
+import re
 from datetime import datetime
 from typing import Iterable
 
@@ -22,10 +22,26 @@ def _join_names(items: Iterable[dict], limit: int | None = None) -> str:
     return " / ".join(str(item.get("name", "")).strip() for item in values if item.get("name"))
 
 
+def _normalize_release_date(value: object) -> str:
+    """将 API 中的字符串或列表日期归一为 YYYY[-MM[-DD]]。"""
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ""
+    text = str(value or "")
+    match = re.search(r"(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?", text)
+    if not match:
+        return ""
+    year, month, day = match.groups()
+    if day:
+        return f"{year}-{int(month):02d}-{int(day):02d}"
+    if month:
+        return f"{year}-{int(month):02d}"
+    return year
+
+
 def transform_movie_detail(movie_id: str, data: dict, captured_at: str | None = None) -> dict:
     """将详情 API JSON 转换为稳定的电影表记录。"""
     rating = data.get("rating") or {}
-    release_date = data.get("release_date") or data.get("pubdate") or ""
+    release_date = _normalize_release_date(data.get("release_date") or data.get("pubdate"))
 
     return {
         "豆瓣ID": str(movie_id),
@@ -70,23 +86,6 @@ def parse_movie_detail(movie_id: str) -> dict | None:
     return record
 
 
-def _user_identity(user: dict) -> str:
-    for key in ("id", "uid", "uri", "name"):
-        value = user.get(key)
-        if value:
-            return str(value)
-    return ""
-
-
-def anonymize_user(user: dict) -> str:
-    """只保留不可逆的稳定摘要，不将公开用户名写入分析数据。"""
-    identity = _user_identity(user)
-    if not identity:
-        return ""
-    raw = f"{config.ANONYMIZATION_SALT}:{identity}".encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()[:16]
-
-
 def transform_review_item(
     movie_id: str,
     movie_title: str,
@@ -95,7 +94,7 @@ def transform_review_item(
     rank: int,
     captured_at: str | None = None,
 ) -> dict:
-    """将短评 API 条目转换为匿名化的标准记录。"""
+    """将短评 API 条目转换为不含用户身份字段的标准记录。"""
     rating = item.get("rating") or {}
     value = rating.get("value")
     stars = f"{int(value)}星" if value not in (None, "") else "未评分"
@@ -104,7 +103,6 @@ def transform_review_item(
         "短评ID": str(item.get("id", "")),
         "豆瓣ID": str(movie_id),
         "电影名称": movie_title,
-        "用户匿名标识": anonymize_user(item.get("user") or {}),
         "评分": stars,
         "短评正文": str(item.get("comment", "")),
         "有用数": str(item.get("vote_count", 0)),

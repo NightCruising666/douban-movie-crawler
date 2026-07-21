@@ -15,7 +15,9 @@ class CleaningTests(unittest.TestCase):
     def test_origin_classification(self):
         self.assertEqual(classify_origin("中国大陆"), "中国大陆")
         self.assertEqual(classify_origin("中国大陆 / 美国"), "合拍")
+        self.assertEqual(classify_origin("中国大陆 / 中国香港"), "合拍")
         self.assertEqual(classify_origin("中国香港"), "港澳台")
+        self.assertEqual(classify_origin("中国台湾 / 日本"), "合拍")
         self.assertEqual(classify_origin("日本"), "进口")
 
     def test_cleaning_and_metrics(self):
@@ -41,8 +43,8 @@ class CleaningTests(unittest.TestCase):
 
         reviews = pd.DataFrame(
             [
-                {"短评ID": "r1", "豆瓣ID": "1", "电影名称": "A", "用户匿名标识": "x", "评分": "5星", "短评正文": "x", "有用数": "9", "评论时间": "2025-01-01", "采样方式": "热门", "排序位置": "1", "采集时间": "2026-01-01T00:00:00+08:00"},
-                {"短评ID": "r2", "豆瓣ID": "1", "电影名称": "A", "用户匿名标识": "y", "评分": "3星", "短评正文": "y", "有用数": "0", "评论时间": "2025-01-02", "采样方式": "热门", "排序位置": "2", "采集时间": "2026-01-01T00:00:00+08:00"},
+                {"短评ID": "r1", "豆瓣ID": "1", "电影名称": "A", "评分": "5星", "短评正文": "x", "有用数": "9", "评论时间": "2025-01-01", "采样方式": "热门", "排序位置": "1", "采集时间": "2026-01-01T00:00:00+08:00"},
+                {"短评ID": "r2", "豆瓣ID": "1", "电影名称": "A", "评分": "3星", "短评正文": "y", "有用数": "0", "评论时间": "2025-01-02", "采样方式": "热门", "排序位置": "2", "采集时间": "2026-01-01T00:00:00+08:00"},
             ]
         )
         metrics = review_metrics(clean_reviews(reviews))

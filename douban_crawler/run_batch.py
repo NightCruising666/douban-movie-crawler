@@ -77,7 +77,6 @@ def main() -> int:
     print(f"本批: {len(batch)} 部  |  累计: {len(collected)}/{len(all_movies)}")
 
     new_count = 0
-    fail_count = 0
     for index, movie in enumerate(batch, 1):
         if new_count and new_count % config.COOLDOWN_EVERY_N == 0:
             print(f"\n  [主动冷却] 已采 {new_count} 部，休息 {config.COOLDOWN_SECONDS} 秒")
@@ -92,22 +91,11 @@ def main() -> int:
             append_to_csv([detail], config.MOVIES_CSV, config.MOVIE_FIELDS)
             collected.add(movie_id)
             new_count += 1
-            fail_count = 0
             time.sleep(delay)
             continue
 
-        fail_count += 1
-        if fail_count <= 2:
-            pause = config.FAIL_PAUSE_SHORT
-            print(f"  等待 {pause} 秒后继续")
-            time.sleep(pause)
-        elif fail_count <= 5:
-            pause = config.FAIL_PAUSE_MEDIUM
-            print(f"  连续失败 {fail_count} 次，等待 {pause} 秒")
-            time.sleep(pause)
-        else:
-            print("\n连续失败 6 次，本批停止，保留已写入数据。")
-            break
+        print("\n检测到一次请求失败，本批立即停止，已写入数据可从断点续采。")
+        break
 
     remaining = len(all_movies) - len(collected)
     print(f"\n本批新增: {new_count} 部  |  累计: {len(collected)}/{len(all_movies)}  |  剩余: {remaining} 部")

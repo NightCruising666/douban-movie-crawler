@@ -68,15 +68,14 @@ MOVIE_TAGS = [
     "纪录片",
 ]
 
-# 热门评论反映社区高认可观点；时间排序评论用于降低只采热评的偏差。
-# 若豆瓣忽略 time 排序，采集后的重复率检查会在清洗报告中暴露该问题。
+# 2026-07-21 对 time/latest/new_score/newest 进行小规模验证：除 latest
+# 返回空外，其余与 hot 前15条重合14条，不能视为独立时间样本。
+# 因此当前只保留一个明确的“热门”样本层，不伪造分层采样。
 REVIEW_SAMPLING_PLAN = (
-    {"label": "热门", "order_by": "hot", "limit": 15},
-    {"label": "时间", "order_by": "time", "limit": 15},
+    {"label": "热门", "order_by": "hot", "limit": 30},
 )
 
 TARGET_MOVIES = None  # None = movies_raw.csv 全量
-ANONYMIZATION_SALT = "douban-course-project-v1"  # 非密钥，仅用于稳定匿名化
 
 
 # ==================== 路径 ====================
@@ -117,7 +116,6 @@ REVIEW_FIELDS = [
     "短评ID",
     "豆瓣ID",
     "电影名称",
-    "用户匿名标识",
     "评分",
     "短评正文",
     "有用数",

@@ -125,7 +125,7 @@ def fetch_movies_by_tag(tag, start=0, limit=None):
         return None
 
 
-def fetch_all_movies_for_tag(tag):
+def fetch_all_movies_for_tag_with_status(tag):
     """
     获取某个标签下的全部电影（自动翻页）。
 
@@ -135,15 +135,17 @@ def fetch_all_movies_for_tag(tag):
         tag: 电影标签
 
     返回:
-        list[dict]: 该标签下所有电影的subjects
+        tuple[list[dict], bool]: 电影列表和标签是否完整采集
     """
     all_subjects = []
     offset = 0
+    complete = True
 
     while offset < config.MAX_PER_TAG:
         data = fetch_movies_by_tag(tag, start=offset)
 
         if data is None:
+            complete = False
             break
 
         subjects = data.get("subjects", [])
@@ -153,10 +155,19 @@ def fetch_all_movies_for_tag(tag):
         all_subjects.extend(subjects)
         offset += len(subjects)
 
+        if len(subjects) < config.PAGE_SIZE:
+            break
+
         time.sleep(config.random_delay(config.SEARCH_DELAY_BASE))
 
     print(f"  标签 '{tag}' 共计 {len(all_subjects)} 部电影")
-    return all_subjects
+    return all_subjects, complete
+
+
+def fetch_all_movies_for_tag(tag):
+    """兼容旧调用：只返回电影列表。"""
+    subjects, _ = fetch_all_movies_for_tag_with_status(tag)
+    return subjects
 
 
 def extract_movie_id(url):

@@ -30,14 +30,16 @@ def load_csv(filename: str) -> pd.DataFrame:
 
 def classify_origin(countries: object) -> str:
     parts = {part.strip() for part in str(countries).split("/") if part.strip() and part.strip() != "nan"}
-    mainland = "中国大陆" in parts
-    greater_china = bool(parts & {"中国香港", "中国台湾", "中国澳门"})
-    foreign = bool(parts - {"中国大陆", "中国香港", "中国台湾", "中国澳门"})
-    if mainland and foreign:
+    china_parts = {"中国大陆", "中国香港", "中国台湾", "中国澳门"}
+    chinese = parts & china_parts
+    foreign = parts - china_parts
+    if chinese and foreign:
         return "合拍"
-    if mainland:
+    if "中国大陆" in parts and len(parts) > 1:
+        return "合拍"
+    if parts == {"中国大陆"}:
         return "中国大陆"
-    if greater_china and not foreign:
+    if chinese:
         return "港澳台"
     if foreign:
         return "进口"
@@ -108,7 +110,7 @@ def review_metrics(reviews: pd.DataFrame) -> pd.DataFrame:
     for (movie_id, title, sample_type), group in grouped:
         ratings = group["评分值"].astype(float)
         useful = group["有用数"].astype(float)
-        raw_weights = useful + 1
+        raw_weights = useful
         log_weights = np.log1p(useful) + 1
         five_stars = int((ratings == 5).sum())
         low, high = wilson_interval(five_stars, len(ratings))
@@ -121,7 +123,9 @@ def review_metrics(reviews: pd.DataFrame) -> pd.DataFrame:
                 "采样方式": sample_type,
                 "有效评分样本数": len(ratings),
                 "平均星级": ratings.mean(),
-                "原始有用数加权星级": np.average(ratings, weights=raw_weights),
+                "原始有用数加权星级": (
+                    np.average(ratings, weights=raw_weights) if raw_weights.sum() > 0 else ratings.mean()
+                ),
                 "对数有用数加权星级": np.average(ratings, weights=log_weights),
                 "五星样本占比": five_stars / len(ratings),
                 "五星占比95%CI下限": low,
