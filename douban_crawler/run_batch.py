@@ -53,7 +53,7 @@ def load_collected_ids() -> set[str]:
         return {row["豆瓣ID"].strip() for row in reader if row.get("豆瓣ID", "").strip()}
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="分批采集豆瓣电影详情")
     parser.add_argument("--status", action="store_true", help="只显示进度")
     parser.add_argument("--batch-size", type=int, default=config.BATCH_SIZE, help="本次最多采集数")
@@ -99,7 +99,12 @@ def parse_args() -> argparse.Namespace:
         default=config.MINIMUM_RUNTIME_HOURS,
         help="运行未满该时长时，连续失败只触发冷却而不停止",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--never-stop-on-failure",
+        action="store_true",
+        help="失败只冷却和跳过，不因连续失败退出；供持续监督模式使用",
+    )
+    return parser.parse_args(argv)
 
 
 def fetch_detail_with_cooldown(
@@ -136,8 +141,8 @@ def should_stop_after_failures(
     )
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     if (
         args.batch_size <= 0
         or args.delay_base < 0
@@ -195,7 +200,7 @@ def main() -> int:
             f"连续失败电影 {consecutive_failed_movies}/{args.max_consecutive_failures}"
         )
         elapsed_seconds = time.monotonic() - run_started_at
-        if should_stop_after_failures(
+        if not args.never_stop_on_failure and should_stop_after_failures(
             consecutive_failed_movies,
             args.max_consecutive_failures,
             elapsed_seconds,
@@ -205,11 +210,14 @@ def main() -> int:
             break
 
         if consecutive_failed_movies >= args.max_consecutive_failures:
-            remaining_hours = max(0.0, args.minimum_runtime_hours - elapsed_seconds / 3600)
-            print(
-                f"  尚在 {args.minimum_runtime_hours:g} 小时保护窗口内"
-                f"（剩余约 {remaining_hours:.1f} 小时），冷却后继续"
-            )
+            if args.never_stop_on_failure:
+                print("  持续监督模式已启用，连续失败只触发冷却，不停止")
+            else:
+                remaining_hours = max(0.0, args.minimum_runtime_hours - elapsed_seconds / 3600)
+                print(
+                    f"  尚在 {args.minimum_runtime_hours:g} 小时保护窗口内"
+                    f"（剩余约 {remaining_hours:.1f} 小时），冷却后继续"
+                )
             consecutive_failed_movies = 0
 
         pause = config.random_delay(args.failure_cooldown_base)

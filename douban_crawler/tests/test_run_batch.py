@@ -38,6 +38,10 @@ class RunBatchTests(unittest.TestCase):
     def test_failure_limit_stops_after_protection_window(self):
         self.assertTrue(run_batch.should_stop_after_failures(3, 3, 3 * 3600, 3))
 
+    def test_continuous_flag_is_accepted(self):
+        args = run_batch.parse_args(["--never-stop-on-failure"])
+        self.assertTrue(args.never_stop_on_failure)
+
 
 if __name__ == "__main__":
     unittest.main()
