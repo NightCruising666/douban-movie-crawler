@@ -4,6 +4,7 @@
     python run_batch.py
     python run_batch.py --status
     python run_batch.py --batch-size 50
+    python run_batch.py --batch-size 2601 --delay-base 12 --cooldown-every 10 --cooldown-seconds 60
 """
 
 from __future__ import annotations
@@ -56,11 +57,31 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="分批采集豆瓣电影详情")
     parser.add_argument("--status", action="store_true", help="只显示进度")
     parser.add_argument("--batch-size", type=int, default=config.BATCH_SIZE, help="本次最多采集数")
+    parser.add_argument(
+        "--delay-base",
+        type=float,
+        default=config.DETAIL_DELAY_BASE,
+        help="每部成功后等待的基准秒数，实际随机浮动±30%%",
+    )
+    parser.add_argument(
+        "--cooldown-every",
+        type=int,
+        default=config.COOLDOWN_EVERY_N,
+        help="每成功采集多少部主动冷却一次",
+    )
+    parser.add_argument(
+        "--cooldown-seconds",
+        type=float,
+        default=config.COOLDOWN_SECONDS,
+        help="每次主动冷却秒数",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.batch_size <= 0 or args.delay_base < 0 or args.cooldown_every <= 0 or args.cooldown_seconds < 0:
+        raise SystemExit("批量数和冷却间隔必须大于0，等待秒数不能小于0。")
     all_movies = load_raw_movies()
     collected = load_collected_ids()
     pending = [row for row in all_movies if row.get("豆瓣ID", "").strip() not in collected]
@@ -78,12 +99,12 @@ def main() -> int:
 
     new_count = 0
     for index, movie in enumerate(batch, 1):
-        if new_count and new_count % config.COOLDOWN_EVERY_N == 0:
-            print(f"\n  [主动冷却] 已采 {new_count} 部，休息 {config.COOLDOWN_SECONDS} 秒")
-            time.sleep(config.COOLDOWN_SECONDS)
+        if new_count and new_count % args.cooldown_every == 0:
+            print(f"\n  [主动冷却] 已采 {new_count} 部，休息 {args.cooldown_seconds:g} 秒")
+            time.sleep(args.cooldown_seconds)
 
         movie_id = movie.get("豆瓣ID", "").strip()
-        delay = config.random_delay(config.DETAIL_DELAY_BASE)
+        delay = config.random_delay(args.delay_base)
         print(f"[{index}/{len(batch)}] ({delay:.1f}s)", end=" ")
         detail = parse_movie_detail(movie_id)
 

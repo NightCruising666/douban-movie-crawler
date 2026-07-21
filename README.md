@@ -68,6 +68,9 @@ python douban_crawler/run_stage3.py --status
 # 阶段二：默认100部，可调小
 python douban_crawler/run_batch.py --batch-size 50
 
+# 阶段二低速长批次：间隔约8.4—15.6秒，每10部冷却60秒
+python douban_crawler/run_batch.py --batch-size 2601 --delay-base 12 --cooldown-every 10 --cooldown-seconds 60
+
 # 阶段三：默认最多处理100部
 python douban_crawler/run_stage3.py --batch-size 50
 ```
