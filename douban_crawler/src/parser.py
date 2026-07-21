@@ -72,8 +72,11 @@ def parse_movie_detail(movie_id: str) -> dict | None:
 
     print(f"  请求详情API: {movie_id} ...", end=" ", flush=True)
     response = safe_get(url, headers=headers)
-    if response is None or response.status_code != 200:
+    if response is None:
         print("✗ 请求失败")
+        return None
+    if response.status_code != 200:
+        print(f"✗ HTTP {response.status_code}")
         return None
 
     try:

@@ -75,13 +75,60 @@ def parse_args() -> argparse.Namespace:
         default=config.COOLDOWN_SECONDS,
         help="每次主动冷却秒数",
     )
+    parser.add_argument(
+        "--failure-cooldown-base",
+        type=float,
+        default=config.FAILURE_COOLDOWN_BASE,
+        help="请求失败后的基准冷却秒数，实际随机浮动±30%%",
+    )
+    parser.add_argument(
+        "--failure-retries",
+        type=int,
+        default=config.FAILURE_RETRIES,
+        help="单部电影在长冷却后的重试次数",
+    )
+    parser.add_argument(
+        "--max-consecutive-failures",
+        type=int,
+        default=config.MAX_CONSECUTIVE_FAILURES,
+        help="连续多少部电影在冷却重试后仍失败才停止",
+    )
     return parser.parse_args()
+
+
+def fetch_detail_with_cooldown(
+    movie_id: str,
+    *,
+    failure_retries: int,
+    failure_cooldown_base: float,
+) -> dict | None:
+    """请求详情；失败时长冷却后有限重试，避免连续冲击接口。"""
+    for attempt in range(failure_retries + 1):
+        detail = parse_movie_detail(movie_id)
+        if detail is not None:
+            return detail
+        if attempt < failure_retries:
+            pause = config.random_delay(failure_cooldown_base)
+            print(
+                f"  请求失败，冷却 {pause / 60:.1f} 分钟后"
+                f"进行第 {attempt + 1}/{failure_retries} 次重试"
+            )
+            time.sleep(pause)
+    return None
 
 
 def main() -> int:
     args = parse_args()
-    if args.batch_size <= 0 or args.delay_base < 0 or args.cooldown_every <= 0 or args.cooldown_seconds < 0:
-        raise SystemExit("批量数和冷却间隔必须大于0，等待秒数不能小于0。")
+    if (
+        args.batch_size <= 0
+        or args.delay_base < 0
+        or args.cooldown_every <= 0
+        or args.cooldown_seconds < 0
+        or args.failure_cooldown_base < 0
+        or args.failure_retries < 0
+        or args.max_consecutive_failures <= 0
+    ):
+        raise SystemExit("批量数、冷却间隔和失败上限必须大于0，等待秒数与重试数不能小于0。")
     all_movies = load_raw_movies()
     collected = load_collected_ids()
     pending = [row for row in all_movies if row.get("豆瓣ID", "").strip() not in collected]
@@ -98,6 +145,7 @@ def main() -> int:
     print(f"本批: {len(batch)} 部  |  累计: {len(collected)}/{len(all_movies)}")
 
     new_count = 0
+    consecutive_failed_movies = 0
     for index, movie in enumerate(batch, 1):
         if new_count and new_count % args.cooldown_every == 0:
             print(f"\n  [主动冷却] 已采 {new_count} 部，休息 {args.cooldown_seconds:g} 秒")
@@ -106,17 +154,32 @@ def main() -> int:
         movie_id = movie.get("豆瓣ID", "").strip()
         delay = config.random_delay(args.delay_base)
         print(f"[{index}/{len(batch)}] ({delay:.1f}s)", end=" ")
-        detail = parse_movie_detail(movie_id)
+        detail = fetch_detail_with_cooldown(
+            movie_id,
+            failure_retries=args.failure_retries,
+            failure_cooldown_base=args.failure_cooldown_base,
+        )
 
         if detail:
             append_to_csv([detail], config.MOVIES_CSV, config.MOVIE_FIELDS)
             collected.add(movie_id)
             new_count += 1
+            consecutive_failed_movies = 0
             time.sleep(delay)
             continue
 
-        print("\n检测到一次请求失败，本批立即停止，已写入数据可从断点续采。")
-        break
+        consecutive_failed_movies += 1
+        print(
+            f"  该电影冷却重试后仍失败，暂时跳过；"
+            f"连续失败电影 {consecutive_failed_movies}/{args.max_consecutive_failures}"
+        )
+        if consecutive_failed_movies >= args.max_consecutive_failures:
+            print("\n连续失败达到上限，本批停止，未成功电影会在下次运行补采。")
+            break
+
+        pause = config.random_delay(args.failure_cooldown_base)
+        print(f"  继续下一部前再冷却 {pause / 60:.1f} 分钟")
+        time.sleep(pause)
 
     remaining = len(all_movies) - len(collected)
     print(f"\n本批新增: {new_count} 部  |  累计: {len(collected)}/{len(all_movies)}  |  剩余: {remaining} 部")
