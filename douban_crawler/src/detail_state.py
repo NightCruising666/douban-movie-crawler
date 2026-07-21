@@ -75,6 +75,16 @@ def load_failure_attempts() -> list[dict]:
         return list(csv.DictReader(file))
 
 
+def next_failure_attempt_number(movie_id: str, round_number: int) -> int:
+    """同一轮中断恢复时，从已落盘的最大尝试序号继续编号。"""
+    existing_numbers = [
+        _as_int(row.get("轮内尝试序号"))
+        for row in load_failure_attempts()
+        if row.get("豆瓣ID") == movie_id and _as_int(row.get("轮次")) == round_number
+    ]
+    return max(existing_numbers, default=0) + 1
+
+
 def record_failure_attempts(
     movie_id: str,
     title: str,

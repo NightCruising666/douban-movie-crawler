@@ -219,12 +219,16 @@ def main(argv: list[str] | None = None) -> int:
         movie_id = movie.get("豆瓣ID", "").strip()
         delay = config.random_delay(args.delay_base)
         print(f"[{index}/{len(batch)}] ({delay:.1f}s)", end=" ")
+        first_attempt_number = detail_state.next_failure_attempt_number(
+            movie_id, round_number
+        )
+
         def persist_failed_attempt(attempt_number: int, attempt_record: dict) -> None:
             detail_state.record_failure_attempt(
                 movie_id,
                 movie.get("电影名称", ""),
                 round_number,
-                attempt_number,
+                first_attempt_number + attempt_number - 1,
                 attempt_record,
             )
 
