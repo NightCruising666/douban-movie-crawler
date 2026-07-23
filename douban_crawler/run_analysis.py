@@ -1,6 +1,6 @@
 """生成评分稳定性与类型结构分析表、图。
 
-先运行 ``src/data_cleaning.py``。本脚本只读取 ``data/processed``，
+先运行 ``run_cleaning.py``。本脚本只读取 ``data/processed``，
 所有结果写入 ``data/analysis``，不会修改原始采集文件。
 """
 
@@ -332,7 +332,7 @@ def add_collection_quality(summary: list[dict]) -> None:
 def main() -> int:
     movie_path = PROCESSED_DIR / "movies_cleaned.csv"
     if not movie_path.exists():
-        print("缺少 data/processed/movies_cleaned.csv，请先运行 src/data_cleaning.py。")
+        print("缺少 data/processed/movies_cleaned.csv，请先运行 run_cleaning.py。")
         return 1
 
     configure_plots()

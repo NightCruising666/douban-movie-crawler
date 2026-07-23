@@ -48,7 +48,9 @@ pip install -r douban_crawler/requirements.txt
 | 数据 | 数量 | 状态 |
 |---|---:|---|
 | 新版候选电影池 `movies_raw.csv` | 2601 部 | 阶段一已完成，19 个标签 |
-| 新版电影详情 `movies.csv` | 661 部 | 新版 15 字段，按豆瓣ID断点续采 |
+| 新版电影详情 `movies.csv` | 2601 部 | 阶段二已完成，ID无重复 |
+| 阶段二失败复核 | 12 部 | 均已恢复，确认不可用0部 |
+| 新版正式短评 | 0 条 | 阶段三尚未开始 |
 | 旧电影详情 | 499 部完整旧表 + 135 部部分新表 | 已归档，不计入新版断点 |
 | 旧短评 | 9980 条正式数据 + 200 条试采 | 已删除用户标识并归档 |
 
@@ -81,7 +83,7 @@ python douban_crawler/run_stage3.py --batch-size 50
 清洗与分析：
 
 ```bash
-python douban_crawler/src/data_cleaning.py
+python douban_crawler/run_cleaning.py
 python douban_crawler/run_analysis.py
 ```
 
@@ -122,16 +124,18 @@ python douban_crawler/main.py --stage1 --rebuild
 ## 6. 清洗与分析
 
 ```bash
-python douban_crawler/src/data_cleaning.py
+python douban_crawler/run_cleaning.py
 ```
 
 清洗脚本会产生：
 
-- `movies_cleaned.csv`：数值类型、产地分类、短/长评参与率、贝叶斯加权评分。
+- `movies_cleaned.csv`：2601条清洗主表，包含质量标记和两个课题的纳入标志。
+- `movies_cleaning_report.csv`：缺失、异常、筛选数量与比例。
+- `movies_cleaning_rules.csv`：每条清洗规则、处理方式、选择原因、未采用方法和命中数。
 - `reviews_cleaned.csv`：数值星级、有用数和时间字段。
 - `review_metrics.csv`：普通平均、原始有用数加权、对数加权、五星占比及其 95% 置信区间、星级分布熵。
 
-完整统计设计见 [docs/ANALYSIS_PLAN.md](docs/ANALYSIS_PLAN.md)。
+完整清洗说明见 [docs/CLEANING_PLAN.md](docs/CLEANING_PLAN.md)，全流程筛选决策见 [docs/PIPELINE_DECISIONS.md](docs/PIPELINE_DECISIONS.md)，统计设计见 [docs/ANALYSIS_PLAN.md](docs/ANALYSIS_PLAN.md)。
 
 分析脚本会在 `data/analysis/` 生成描述统计、年度类型占比、产地比较、四象限分类等 CSV，以及对应 PNG 图。该目录可由原始数据重复生成，因此默认不提交。
 
@@ -143,6 +147,7 @@ douban_crawler/
 ├── run_batch.py
 ├── run_stage2_continuous.py
 ├── run_stage3.py
+├── run_cleaning.py
 ├── run_analysis.py
 ├── src/
 │   ├── config.py
